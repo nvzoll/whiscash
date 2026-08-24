@@ -92,7 +92,7 @@ Passwords must be at least 8 characters and at most 72 UTF-8 bytes. Emails are s
 
 ## Schema
 
-ORM models in `models.py` are the source of truth. The initial Alembic revision creates `user` and `refresh_token` from that metadata.
+ORM models in `models.py` are the source of truth. The initial Alembic revision snapshots `user` and `refresh_token`.
 
 After changing models:
 
