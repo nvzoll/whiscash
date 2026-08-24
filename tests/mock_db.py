@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Self, cast
 from uuid import UUID, uuid4
 
@@ -61,7 +61,7 @@ class MockSession:
     async def rollback(self) -> None:
         self._new.clear()
 
-    async def get[T](self, model: type[T], entity_id: UUID) -> T | None:
+    async def get[T](self, model: type[T], entity_id: UUID, **_: Any) -> T | None:
         stored: object | None
         if model is User:
             stored = self._store.users.get(entity_id)
@@ -70,6 +70,19 @@ class MockSession:
         else:
             return None
         return stored if isinstance(stored, model) else None
+
+    async def execute(self, statement: Any) -> MockResult:
+        token_id, requires_active, values = _parse_refresh_token_update(statement)
+        if token_id is None:
+            return MockResult()
+        token = self._store.refresh_tokens.get(token_id)
+        if token is None:
+            return MockResult()
+        if requires_active and token.revoked_at is not None:
+            return MockResult()
+        for key, value in values.items():
+            setattr(token, key, value)
+        return MockResult(token.id)
 
     async def scalar(self, statement: Select[Any]) -> Any | None:
         if not isinstance(statement, Select):
@@ -84,6 +97,14 @@ class MockSession:
         return self._store.users.get(user_id)
 
 
+class MockResult:
+    def __init__(self, value: UUID | None = None) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> UUID | None:
+        return self._value
+
+
 class MockSessionFactory:
     def __init__(self, store: MockStore) -> None:
         self._store = store
@@ -96,7 +117,7 @@ def _set_insert_defaults(instance: User | RefreshToken) -> None:
     if "id" not in instance.__dict__:
         instance.id = uuid4()
     if "created_at" not in instance.__dict__:
-        instance.created_at = datetime.now(timezone.utc)
+        instance.created_at = datetime.now(UTC)
 
 
 def _extract_email_filter(statement: Select[Any]) -> str | None:
@@ -107,6 +128,52 @@ def _extract_email_filter(statement: Select[Any]) -> str | None:
         if email := _email_from_clause(clause):
             return email
     return None
+
+
+def _parse_refresh_token_update(
+    statement: Any,
+) -> tuple[UUID | None, bool, dict[str, Any]]:
+    where = getattr(statement, "whereclause", None)
+    if where is None:
+        return None, False, {}
+    token_id: UUID | None = None
+    requires_active = False
+    for clause in _iter_where_clauses(where):
+        if token_id is None:
+            token_id = _uuid_from_clause(clause, "id")
+        if _is_null_clause(clause, "revoked_at"):
+            requires_active = True
+    values: dict[str, Any] = {}
+    for column, value in getattr(statement, "_values", {}).items():
+        key = getattr(column, "key", None)
+        if key is None:
+            continue
+        values[key] = getattr(value, "value", value)
+    return token_id, requires_active, values
+
+
+def _iter_where_clauses(where: Any) -> list[Any]:
+    children = list(getattr(where, "get_children", lambda: ())())
+    if children and type(where).__name__ == "BooleanClauseList":
+        return children
+    return [where]
+
+
+def _uuid_from_clause(clause: Any, key: str) -> UUID | None:
+    left = getattr(clause, "left", None)
+    if getattr(left, "key", None) != key:
+        return None
+    right = getattr(clause, "right", None)
+    value = getattr(right, "value", None)
+    return value if isinstance(value, UUID) else None
+
+
+def _is_null_clause(clause: Any, key: str) -> bool:
+    left = getattr(clause, "left", None)
+    if getattr(left, "key", None) != key:
+        return False
+    right = getattr(clause, "right", None)
+    return type(right).__name__ == "Null"
 
 
 def _email_from_clause(clause: Any) -> str | None:

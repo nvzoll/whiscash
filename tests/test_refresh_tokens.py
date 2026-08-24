@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta, timezone
+import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -58,7 +59,7 @@ def test_verify_refresh_token_secret() -> None:
 
 
 def test_is_refresh_token_active() -> None:
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
     active = RefreshToken(
         user_id=uuid4(),
         token_hash="hash",
@@ -110,13 +111,43 @@ async def test_refresh_token_rotation_rejects_reused_token(
         token = await issue_refresh_token(session, user)
         await session.commit()
         refresh_token, _ = await get_valid_refresh_token(session, token)
-        revoke_refresh_token(refresh_token)
+        assert await revoke_refresh_token(session, refresh_token)
         await session.commit()
 
     async with session_factory() as session:
         with pytest.raises(HTTPException) as error:
             await get_valid_refresh_token(session, token)
         assert error.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_revoke_refresh_token_claims_only_once(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        token = await issue_refresh_token(session, user)
+        await session.commit()
+
+    async def claim() -> bool:
+        async with session_factory() as session:
+            refresh_token, _ = await get_valid_refresh_token(session, token)
+            claimed = await revoke_refresh_token(session, refresh_token)
+            await session.commit()
+            return claimed
+
+    results = await asyncio.gather(claim(), claim(), return_exceptions=True)
+    successes = [result for result in results if result is True]
+    failures = [
+        result
+        for result in results
+        if result is False
+        or (isinstance(result, HTTPException) and result.status_code == 401)
+    ]
+    assert len(successes) == 1
+    assert len(failures) == 1
 
 
 @pytest.mark.asyncio
@@ -131,7 +162,7 @@ async def test_expired_refresh_token_is_rejected(
         refresh_token = RefreshToken(
             user_id=user.id,
             token_hash=hash_refresh_token_secret(secret),
-            expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
         )
         session.add(refresh_token)
         await session.commit()
