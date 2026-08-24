@@ -5,7 +5,7 @@ from hashlib import sha256
 from hmac import compare_digest
 from secrets import token_urlsafe
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import bcrypt
 import jwt
@@ -117,10 +117,15 @@ def is_refresh_token_active(
     return expires_at > current_time
 
 
-async def issue_refresh_token(session: AsyncSession, user: User) -> str:
+async def issue_refresh_token(
+    session: AsyncSession,
+    user: User,
+    family_id: UUID | None = None,
+) -> str:
     secret = token_urlsafe(32)
     refresh_token = RefreshToken(
         user_id=user.id,
+        family_id=family_id or uuid4(),
         token_hash=hash_refresh_token_secret(secret),
         expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expires_days),
     )
@@ -154,6 +159,17 @@ async def get_valid_refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
+    if refresh_token.revoked_at is not None:
+        await revoke_refresh_token_family(
+            session,
+            user_id=refresh_token.user_id,
+            family_id=refresh_token.family_id,
+        )
+        await session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
     if not is_refresh_token_active(refresh_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -166,6 +182,24 @@ async def get_valid_refresh_token(
             detail="Invalid or expired refresh token",
         )
     return refresh_token, user
+
+
+async def revoke_refresh_token_family(
+    session: AsyncSession,
+    *,
+    user_id: UUID,
+    family_id: UUID,
+) -> None:
+    now = datetime.now(UTC)
+    await session.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
 
 
 async def revoke_refresh_token(
@@ -188,8 +222,12 @@ async def revoke_refresh_token(
     return True
 
 
-async def create_auth_response(session: AsyncSession, user: User) -> AuthResponse:
-    refresh_token = await issue_refresh_token(session, user)
+async def create_auth_response(
+    session: AsyncSession,
+    user: User,
+    family_id: UUID | None = None,
+) -> AuthResponse:
+    refresh_token = await issue_refresh_token(session, user, family_id=family_id)
     await session.commit()
     return AuthResponse(
         access_token=create_access_token(
@@ -320,7 +358,11 @@ async def refresh(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
-    return await create_auth_response(session, user)
+    return await create_auth_response(
+        session,
+        user,
+        family_id=refresh_token.family_id,
+    )
 
 
 @app.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)

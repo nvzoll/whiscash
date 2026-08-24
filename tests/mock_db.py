@@ -72,17 +72,27 @@ class MockSession:
         return stored if isinstance(stored, model) else None
 
     async def execute(self, statement: Any) -> MockResult:
-        token_id, requires_active, values = _parse_refresh_token_update(statement)
-        if token_id is None:
+        token_id, user_id, family_id, requires_active, values = (
+            _parse_refresh_token_update(statement)
+        )
+        if token_id is None and family_id is None and user_id is None:
             return MockResult()
-        token = self._store.refresh_tokens.get(token_id)
-        if token is None:
+        updated_id: UUID | None = None
+        for token in self._store.refresh_tokens.values():
+            if token_id is not None and token.id != token_id:
+                continue
+            if user_id is not None and token.user_id != user_id:
+                continue
+            if family_id is not None and token.family_id != family_id:
+                continue
+            if requires_active and token.revoked_at is not None:
+                continue
+            for key, value in values.items():
+                setattr(token, key, value)
+            updated_id = token.id
+        if updated_id is None:
             return MockResult()
-        if requires_active and token.revoked_at is not None:
-            return MockResult()
-        for key, value in values.items():
-            setattr(token, key, value)
-        return MockResult(token.id)
+        return MockResult(updated_id)
 
     async def scalar(self, statement: Select[Any]) -> Any | None:
         if not isinstance(statement, Select):
@@ -118,6 +128,8 @@ def _set_insert_defaults(instance: User | RefreshToken) -> None:
         instance.id = uuid4()
     if "created_at" not in instance.__dict__:
         instance.created_at = datetime.now(UTC)
+    if isinstance(instance, RefreshToken) and "family_id" not in instance.__dict__:
+        instance.family_id = uuid4()
 
 
 def _extract_email_filter(statement: Select[Any]) -> str | None:
@@ -132,15 +144,21 @@ def _extract_email_filter(statement: Select[Any]) -> str | None:
 
 def _parse_refresh_token_update(
     statement: Any,
-) -> tuple[UUID | None, bool, dict[str, Any]]:
+) -> tuple[UUID | None, UUID | None, UUID | None, bool, dict[str, Any]]:
     where = getattr(statement, "whereclause", None)
     if where is None:
-        return None, False, {}
+        return None, None, None, False, {}
     token_id: UUID | None = None
+    user_id: UUID | None = None
+    family_id: UUID | None = None
     requires_active = False
     for clause in _iter_where_clauses(where):
         if token_id is None:
             token_id = _uuid_from_clause(clause, "id")
+        if user_id is None:
+            user_id = _uuid_from_clause(clause, "user_id")
+        if family_id is None:
+            family_id = _uuid_from_clause(clause, "family_id")
         if _is_null_clause(clause, "revoked_at"):
             requires_active = True
     values: dict[str, Any] = {}
@@ -149,14 +167,16 @@ def _parse_refresh_token_update(
         if key is None:
             continue
         values[key] = getattr(value, "value", value)
-    return token_id, requires_active, values
+    return token_id, user_id, family_id, requires_active, values
 
 
 def _iter_where_clauses(where: Any) -> list[Any]:
-    children = list(getattr(where, "get_children", lambda: ())())
-    if children and type(where).__name__ == "BooleanClauseList":
-        return children
-    return [where]
+    if type(where).__name__ != "BooleanClauseList":
+        return [where]
+    clauses: list[Any] = []
+    for child in getattr(where, "get_children", lambda: ())():
+        clauses.extend(_iter_where_clauses(child))
+    return clauses or [where]
 
 
 def _uuid_from_clause(clause: Any, key: str) -> UUID | None:

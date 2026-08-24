@@ -27,6 +27,48 @@ async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
     )
     assert reused_response.status_code == 401
 
+    stolen_successor_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": new_refresh_token},
+    )
+    assert stolen_successor_response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_reuse_does_not_revoke_other_sessions(
+    client: AsyncClient,
+) -> None:
+    first_login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    second_login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    assert first_login.status_code == 200
+    assert second_login.status_code == 200
+    first_refresh_token = first_login.json()["refresh_token"]
+    second_refresh_token = second_login.json()["refresh_token"]
+
+    rotated_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": first_refresh_token},
+    )
+    assert rotated_response.status_code == 200
+
+    reused_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": first_refresh_token},
+    )
+    assert reused_response.status_code == 401
+
+    other_session_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": second_refresh_token},
+    )
+    assert other_session_response.status_code == 200
+
 
 @pytest.mark.asyncio
 async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> None:
@@ -58,7 +100,7 @@ async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> 
         "/auth/refresh",
         json={"refresh_token": rotated_refresh_token},
     )
-    assert follow_up_response.status_code == 200
+    assert follow_up_response.status_code == 401
 
 
 @pytest.mark.asyncio

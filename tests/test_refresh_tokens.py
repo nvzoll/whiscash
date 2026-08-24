@@ -101,23 +101,97 @@ async def test_issue_and_validate_refresh_token(
 
 
 @pytest.mark.asyncio
-async def test_refresh_token_rotation_rejects_reused_token(
+async def test_refresh_token_reuse_revokes_family(
     session_factory: MockSessionFactory,
     seeded_user: User,
 ) -> None:
     async with session_factory() as session:
         user = await session.get(User, seeded_user.id)
         assert user is not None
-        token = await issue_refresh_token(session, user)
+        original = await issue_refresh_token(session, user)
+        other_session = await issue_refresh_token(session, user)
         await session.commit()
-        refresh_token, _ = await get_valid_refresh_token(session, token)
+        refresh_token, _ = await get_valid_refresh_token(session, original)
         assert await revoke_refresh_token(session, refresh_token)
+        rotated = await issue_refresh_token(
+            session,
+            user,
+            family_id=refresh_token.family_id,
+        )
         await session.commit()
 
     async with session_factory() as session:
         with pytest.raises(HTTPException) as error:
-            await get_valid_refresh_token(session, token)
+            await get_valid_refresh_token(session, original)
         assert error.value.status_code == 401
+
+        with pytest.raises(HTTPException) as rotated_error:
+            await get_valid_refresh_token(session, rotated)
+        assert rotated_error.value.status_code == 401
+
+        surviving, _ = await get_valid_refresh_token(session, other_session)
+        assert is_refresh_token_active(surviving)
+
+
+@pytest.mark.asyncio
+async def test_invalid_refresh_secret_does_not_revoke_family(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        original = await issue_refresh_token(session, user)
+        await session.commit()
+        refresh_token, _ = await get_valid_refresh_token(session, original)
+        assert await revoke_refresh_token(session, refresh_token)
+        rotated = await issue_refresh_token(
+            session,
+            user,
+            family_id=refresh_token.family_id,
+        )
+        await session.commit()
+        token_id, _ = parse_refresh_token(original)
+        forged = build_refresh_token_value(token_id, "wrong-secret")
+
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as error:
+            await get_valid_refresh_token(session, forged)
+        assert error.value.status_code == 401
+
+        surviving, _ = await get_valid_refresh_token(session, rotated)
+        assert is_refresh_token_active(surviving)
+
+
+@pytest.mark.asyncio
+async def test_expired_refresh_token_does_not_revoke_family(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    family_id = uuid4()
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        secret = "refresh-secret"
+        expired = RefreshToken(
+            user_id=user.id,
+            family_id=family_id,
+            token_hash=hash_refresh_token_secret(secret),
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        )
+        session.add(expired)
+        await session.flush()
+        expired_token = build_refresh_token_value(expired.id, secret)
+        sibling = await issue_refresh_token(session, user, family_id=family_id)
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as error:
+            await get_valid_refresh_token(session, expired_token)
+        assert error.value.status_code == 401
+
+        surviving, _ = await get_valid_refresh_token(session, sibling)
+        assert is_refresh_token_active(surviving)
 
 
 @pytest.mark.asyncio
