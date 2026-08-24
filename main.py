@@ -327,10 +327,13 @@ async def login(
 ) -> AuthResponse:
     user = await session.scalar(select(User).where(User.email == str(payload.email)))
     if user is None:
+        dummy = token_urlsafe(32)
+        await run_in_threadpool(hash_password, dummy)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
     password_matches = await run_in_threadpool(
         verify_password,
         payload.password,
@@ -341,6 +344,7 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
     return await create_auth_response(session, user)
 
 

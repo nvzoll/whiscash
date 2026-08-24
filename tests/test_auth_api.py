@@ -3,6 +3,52 @@ import asyncio
 import pytest
 from httpx import AsyncClient
 
+from main import hash_password, verify_password
+
+
+@pytest.mark.asyncio
+async def test_login_unknown_email_hashes_random_dummy(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hashed_secrets: list[str] = []
+    verified: list[tuple[str, str]] = []
+    original_hash = hash_password
+    original_verify = verify_password
+
+    def tracked_hash(password: str) -> str:
+        hashed_secrets.append(password)
+        return original_hash(password)
+
+    def tracked_verify(password: str, password_hash: str) -> bool:
+        verified.append((password, password_hash))
+        return original_verify(password, password_hash)
+
+    monkeypatch.setattr("main.hash_password", tracked_hash)
+    monkeypatch.setattr("main.verify_password", tracked_verify)
+
+    response = await client.post(
+        "/auth/login",
+        json={"email": "missing@example.com", "password": "correct-horse"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+    assert len(hashed_secrets) == 1
+    assert hashed_secrets[0] != "correct-horse"
+    assert verified == []
+
+
+@pytest.mark.asyncio
+async def test_login_wrong_password_is_rejected(client: AsyncClient) -> None:
+    response = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "wrong-horse-password"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
 
 @pytest.mark.asyncio
 async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
