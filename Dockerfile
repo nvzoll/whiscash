@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY main.py models.py schemas.py settings.py alembic.ini entrypoint.sh /app/
 COPY alembic /app/alembic
 
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 RUN useradd --system --uid 1000 --create-home app
 

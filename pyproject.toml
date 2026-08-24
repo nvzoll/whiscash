@@ -1,7 +1,7 @@
 [project]
 name = "fastapi-auth"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.19.1",
     "asyncpg>=0.31.0",
