@@ -4,8 +4,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://auth:auth@postgres:5432/auth
-      JWT_SECRET: local-compose-secret-change-me-32-bytes
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_EXPIRES_MINUTES: "60"
       JWT_REFRESH_EXPIRES_DAYS: "30"
     depends_on:

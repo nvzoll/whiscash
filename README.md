@@ -10,7 +10,10 @@ FastAPI service for email/password auth with JWT access tokens, rotating refresh
 
 ## Quick start
 
-```powershell
+Put `JWT_SECRET` in a gitignored `.secrets.json` in the project root.
+`mise run` loads that file into the task environment.
+
+```sh
 uv sync --group dev
 mise run start
 ```
@@ -27,10 +30,11 @@ OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 | `mise run drop-db` | Drop the `auth` database |
 | `mise run create-db` | Create the `auth` database |
 | `mise run migrate` | `uv run alembic upgrade head` against localhost |
+| `mise uvr` | `uv run` with env variables loaded |
 
 Reset schema:
 
-```powershell
+```sh
 mise run start
 mise run drop-db
 mise run create-db
@@ -41,7 +45,7 @@ mise run migrate
 
 Without mise:
 
-```powershell
+```sh
 docker compose up --build -d --wait
 uv run alembic upgrade head
 uv run alembic downgrade base
@@ -51,7 +55,7 @@ uv run alembic downgrade base
 
 Start Postgres only, migrate, then run uvicorn:
 
-```powershell
+```sh
 docker compose up -d --wait postgres
 uv run alembic upgrade head
 uv run uvicorn main:app --reload
@@ -64,12 +68,11 @@ Settings load from environment variables or a `.env` file.
 | Variable | Default |
 | --- | --- |
 | `DATABASE_URL` | `postgresql+asyncpg://auth:auth@localhost:5432/auth` |
-| `JWT_SECRET` | `development-only-change-me-32-bytes` |
+| `JWT_SECRET` | required; no default |
 | `JWT_ALGORITHM` | `HS256` |
 | `JWT_EXPIRES_MINUTES` | `60` |
 | `JWT_REFRESH_EXPIRES_DAYS` | `30` |
 
-Compose overrides `DATABASE_URL` and `JWT_SECRET` for the API container. Change those values before any real use.
 
 ## API
 
@@ -93,7 +96,7 @@ ORM models in `models.py` are the source of truth. The initial Alembic revision 
 
 After changing models:
 
-```powershell
+```sh
 uv run alembic revision --autogenerate -m "describe the change"
 ```
 
@@ -101,8 +104,8 @@ Review the generated file, then `mise run migrate` or `uv run alembic upgrade he
 
 ## Tests
 
-```powershell
-uv run python -m pytest
+```sh
+uv run pytest
 ```
 
 API tests use an in-memory mock session and do not need Postgres.

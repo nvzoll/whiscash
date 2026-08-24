@@ -1,3 +1,7 @@
+[env]
+_.file = { path = ".secrets.json", redact = true }
+database_url = "postgresql+asyncpg://auth:auth@localhost:5432/auth"
+
 [tasks.start]
 description = "Start docker compose"
 run = "docker compose up --build -d --wait"
@@ -17,3 +21,7 @@ docker compose exec -T postgres psql -U auth -d postgres -c "CREATE DATABASE aut
 [tasks.migrate]
 description = "Run migrations"
 run = "uv run alembic upgrade head"
+
+[tasks.uvr]
+description = "Literally uv run"
+run = "uv run"

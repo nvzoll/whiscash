@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
+
+os.environ.setdefault("JWT_SECRET", "unit-test-secret-change-me-32-bytes")
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://auth:auth@localhost:5432/auth")
 
 import pytest
 from httpx import ASGITransport, AsyncClient
