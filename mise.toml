@@ -1,0 +1,19 @@
+[tasks.start]
+description = "Start docker compose"
+run = "docker compose up --build -d --wait"
+
+[tasks.drop-db]
+description = "Drop the database"
+run = '''
+docker compose exec -T postgres psql -U auth -d postgres -c "DROP DATABASE IF EXISTS auth WITH (FORCE);"
+'''
+
+[tasks.create-db]
+description = "Create the database"
+run = '''
+docker compose exec -T postgres psql -U auth -d postgres -c "CREATE DATABASE auth;"
+'''
+
+[tasks.migrate]
+description = "Run migrations"
+run = "uv run alembic upgrade head"

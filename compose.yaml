@@ -7,6 +7,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://auth:auth@postgres:5432/auth
       JWT_SECRET: local-compose-secret-change-me-32-bytes
       JWT_EXPIRES_MINUTES: "60"
+      JWT_REFRESH_EXPIRES_DAYS: "30"
     depends_on:
       postgres:
         condition: service_healthy
