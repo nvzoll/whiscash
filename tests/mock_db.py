@@ -98,13 +98,18 @@ class MockSession:
         if not isinstance(statement, Select):
             return None
         descriptions = statement.column_descriptions
-        if not descriptions or descriptions[0].get("entity") is not User:
+        if not descriptions:
             return None
-        if not (email := _extract_email_filter(statement)):
-            return None
-        if not (user_id := self._store.emails.get(email)):
-            return None
-        return self._store.users.get(user_id)
+        entity = descriptions[0].get("entity")
+        if entity is User:
+            if not (email := _extract_email_filter(statement)):
+                return None
+            if not (user_id := self._store.emails.get(email)):
+                return None
+            return self._store.users.get(user_id)
+        if entity is RefreshToken:
+            return _find_refresh_token(self._store, statement)
+        return None
 
 
 class MockResult:
@@ -130,6 +135,42 @@ def _set_insert_defaults(instance: User | RefreshToken) -> None:
         instance.created_at = datetime.now(UTC)
     if isinstance(instance, RefreshToken) and "family_id" not in instance.__dict__:
         instance.family_id = uuid4()
+
+
+def _find_refresh_token(store: MockStore, statement: Select[Any]) -> RefreshToken | None:
+    where = statement.whereclause
+    if where is None:
+        return None
+    user_id: UUID | None = None
+    family_id: UUID | None = None
+    requires_active = False
+    for clause in _iter_where_clauses(where):
+        if user_id is None:
+            user_id = _uuid_from_clause(clause, "user_id")
+        if family_id is None:
+            family_id = _uuid_from_clause(clause, "family_id")
+        if _is_null_clause(clause, "revoked_at"):
+            requires_active = True
+    matched: RefreshToken | None = None
+    for token in store.refresh_tokens.values():
+        if user_id is not None and token.user_id != user_id:
+            continue
+        if family_id is not None and token.family_id != family_id:
+            continue
+        if requires_active and token.revoked_at is not None:
+            continue
+        if _refresh_token_unexpired(token):
+            return token
+        if matched is None:
+            matched = token
+    return matched
+
+
+def _refresh_token_unexpired(token: RefreshToken) -> bool:
+    expires_at = token.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at > datetime.now(UTC)
 
 
 def _extract_email_filter(statement: Select[Any]) -> str | None:

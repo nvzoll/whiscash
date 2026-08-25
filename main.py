@@ -52,6 +52,7 @@ def create_access_token(
     user_id: UUID,
     email: str,
     email_verified: bool,
+    session_id: UUID,
     expires_minutes: int = settings.jwt_expires_minutes,
 ) -> str:
     now = datetime.now(UTC)
@@ -60,6 +61,7 @@ def create_access_token(
         "email": email,
         "email_verified": email_verified,
         "typ": "access",
+        "sid": str(session_id),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=expires_minutes)).timestamp()),
     }
@@ -73,7 +75,15 @@ def decode_access_token(token: str) -> TokenClaims:
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
             options={
-                "require": ["sub", "email", "email_verified", "typ", "iat", "exp"],
+                "require": [
+                    "sub",
+                    "email",
+                    "email_verified",
+                    "typ",
+                    "sid",
+                    "iat",
+                    "exp",
+                ],
             },
         )
         return TokenClaims.model_validate(payload)
@@ -222,18 +232,39 @@ async def revoke_refresh_token(
     return True
 
 
+async def get_active_session_token(
+    session: AsyncSession,
+    user_id: UUID,
+    family_id: UUID,
+) -> RefreshToken | None:
+    now = datetime.now(UTC)
+    refresh_token = await session.scalar(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.family_id == family_id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        )
+    )
+    if refresh_token is None or not is_refresh_token_active(refresh_token):
+        return None
+    return refresh_token
+
+
 async def create_auth_response(
     session: AsyncSession,
     user: User,
     family_id: UUID | None = None,
 ) -> AuthResponse:
-    refresh_token = await issue_refresh_token(session, user, family_id=family_id)
+    session_id = family_id or uuid4()
+    refresh_token = await issue_refresh_token(session, user, family_id=session_id)
     await session.commit()
     return AuthResponse(
         access_token=create_access_token(
             user.id,
             user.email,
             user.email_verified,
+            session_id,
         ),
         refresh_token=refresh_token,
         expires_in=settings.jwt_expires_minutes * 60,
@@ -270,6 +301,8 @@ async def get_current_user(
         raise unauthorized from error
     user = await session.get(User, claims.sub)
     if user is None:
+        raise unauthorized
+    if await get_active_session_token(session, user.id, claims.sid) is None:
         raise unauthorized
     return user
 

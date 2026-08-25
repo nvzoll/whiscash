@@ -24,10 +24,12 @@ def test_password_hash_and_verify() -> None:
 
 def test_access_token_round_trip() -> None:
     user_id = uuid4()
+    session_id = uuid4()
     token = create_access_token(
         user_id,
         "user@example.com",
         email_verified=True,
+        session_id=session_id,
         expires_minutes=5,
     )
 
@@ -37,6 +39,7 @@ def test_access_token_round_trip() -> None:
     assert str(claims.email) == "user@example.com"
     assert claims.email_verified is True
     assert claims.typ == "access"
+    assert claims.sid == session_id
     assert claims.exp > claims.iat
 
 
@@ -45,6 +48,7 @@ def test_expired_access_token_is_rejected() -> None:
         uuid4(),
         "user@example.com",
         email_verified=False,
+        session_id=uuid4(),
         expires_minutes=-1,
     )
 
@@ -64,6 +68,7 @@ def _token_payload(**overrides: object) -> dict[str, object]:
         "email": "user@example.com",
         "email_verified": False,
         "typ": "access",
+        "sid": str(uuid4()),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=5)).timestamp()),
     }
@@ -89,6 +94,19 @@ def test_refresh_typ_token_is_rejected_as_access_token() -> None:
 def test_access_token_without_typ_is_rejected() -> None:
     payload = _token_payload()
     del payload["typ"]
+    token = jwt.encode(
+        payload,
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+    with pytest.raises(ValueError, match="invalid or expired access token"):
+        decode_access_token(token)
+
+
+def test_access_token_without_sid_is_rejected() -> None:
+    payload = _token_payload()
+    del payload["sid"]
     token = jwt.encode(
         payload,
         settings.jwt_secret,

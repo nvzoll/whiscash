@@ -1,5 +1,6 @@
 import asyncio
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -7,8 +8,36 @@ from fastapi.security import HTTPAuthorizationCredentials
 from httpx import AsyncClient, Response
 
 from main import create_access_token, get_current_user, hash_password, verify_password
-from models import User
+from models import RefreshToken, User
 from tests.mock_db import MockSessionFactory
+
+
+async def create_session_access_token(
+    session_factory: MockSessionFactory,
+    user: User,
+) -> str:
+    session_id = await create_session_id(session_factory, user)
+    return create_access_token(
+        user.id,
+        user.email,
+        user.email_verified,
+        session_id,
+    )
+
+
+async def create_session_id(
+    session_factory: MockSessionFactory,
+    user: User,
+) -> UUID:
+    async with session_factory() as session:
+        refresh_token = RefreshToken(
+            user_id=user.id,
+            token_hash="test-token-hash",
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+        session.add(refresh_token)
+        await session.commit()
+        return refresh_token.family_id
 
 
 @pytest.mark.asyncio
@@ -186,6 +215,125 @@ async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
     assert refresh_response.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_logout_invalidates_access_token(client: AsyncClient) -> None:
+    login_response = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    access_token = login_response.json()["access_token"]
+    refresh_token = login_response.json()["refresh_token"]
+
+    me_response = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert me_response.status_code == 200
+
+    logout_response = await client.post(
+        "/auth/logout",
+        json={"refresh_token": refresh_token},
+    )
+    assert logout_response.status_code == 204
+
+    me_after_logout = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert_invalid_access_token(me_after_logout)
+
+
+@pytest.mark.asyncio
+async def test_logout_does_not_invalidate_other_session_access_token(
+    client: AsyncClient,
+) -> None:
+    first_login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    second_login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    first_access_token = first_login.json()["access_token"]
+    second_access_token = second_login.json()["access_token"]
+
+    logout_response = await client.post(
+        "/auth/logout",
+        json={"refresh_token": first_login.json()["refresh_token"]},
+    )
+    assert logout_response.status_code == 204
+
+    first_me = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {first_access_token}"},
+    )
+    second_me = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {second_access_token}"},
+    )
+    assert_invalid_access_token(first_me)
+    assert second_me.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_access_token_valid(client: AsyncClient) -> None:
+    login_response = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    access_token = login_response.json()["access_token"]
+    refresh_token = login_response.json()["refresh_token"]
+
+    refresh_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": refresh_token},
+    )
+    assert refresh_response.status_code == 200
+
+    me_response = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert me_response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_refresh_reuse_invalidates_session_access_tokens(
+    client: AsyncClient,
+) -> None:
+    login_response = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    original_access_token = login_response.json()["access_token"]
+    original_refresh_token = login_response.json()["refresh_token"]
+
+    refresh_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": original_refresh_token},
+    )
+    assert refresh_response.status_code == 200
+    rotated_access_token = refresh_response.json()["access_token"]
+
+    reused_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": original_refresh_token},
+    )
+    assert reused_response.status_code == 401
+
+    original_me = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {original_access_token}"},
+    )
+    rotated_me = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {rotated_access_token}"},
+    )
+    assert_invalid_access_token(original_me)
+    assert_invalid_access_token(rotated_me)
+
+
 def assert_invalid_access_token(response: Response) -> None:
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid or expired access token"
@@ -304,6 +452,7 @@ async def test_get_me_rejects_expired_access_token(
         seeded_user.id,
         seeded_user.email,
         seeded_user.email_verified,
+        uuid4(),
         expires_minutes=-1,
     )
     response = await client.get(
@@ -321,6 +470,25 @@ async def test_get_me_rejects_access_token_for_unknown_user(
         uuid4(),
         "ghost@example.com",
         email_verified=False,
+        session_id=uuid4(),
+    )
+    response = await client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert_invalid_access_token(response)
+
+
+@pytest.mark.asyncio
+async def test_get_me_rejects_access_token_for_unknown_session(
+    client: AsyncClient,
+    seeded_user: User,
+) -> None:
+    token = create_access_token(
+        seeded_user.id,
+        seeded_user.email,
+        seeded_user.email_verified,
+        uuid4(),
     )
     response = await client.get(
         "/auth/me",
@@ -332,13 +500,10 @@ async def test_get_me_rejects_access_token_for_unknown_user(
 @pytest.mark.asyncio
 async def test_patch_me_updates_profile(
     client: AsyncClient,
+    session_factory: MockSessionFactory,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
-        seeded_user.id,
-        seeded_user.email,
-        seeded_user.email_verified,
-    )
+    token = await create_session_access_token(session_factory, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
@@ -365,13 +530,10 @@ async def test_patch_me_updates_profile(
 @pytest.mark.asyncio
 async def test_patch_me_rejects_empty_update(
     client: AsyncClient,
+    session_factory: MockSessionFactory,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
-        seeded_user.id,
-        seeded_user.email,
-        seeded_user.email_verified,
-    )
+    token = await create_session_access_token(session_factory, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
@@ -418,6 +580,7 @@ async def test_patch_me_rejects_expired_access_token(
         seeded_user.id,
         seeded_user.email,
         seeded_user.email_verified,
+        uuid4(),
         expires_minutes=-1,
     )
     response = await client.patch(
@@ -436,6 +599,7 @@ async def test_patch_me_rejects_access_token_for_unknown_user(
         uuid4(),
         "ghost@example.com",
         email_verified=False,
+        session_id=uuid4(),
     )
     response = await client.patch(
         "/auth/me",
@@ -484,7 +648,30 @@ async def test_get_current_user_rejects_invalid_token(
 async def test_get_current_user_rejects_unknown_user(
     session_factory: MockSessionFactory,
 ) -> None:
-    token = create_access_token(uuid4(), "ghost@example.com", email_verified=False)
+    token = create_access_token(
+        uuid4(),
+        "ghost@example.com",
+        email_verified=False,
+        session_id=uuid4(),
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as error:
+            await get_current_user(credentials, session)
+    assert_unauthorized_gate(error.value)
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_rejects_unknown_session(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    token = create_access_token(
+        seeded_user.id,
+        seeded_user.email,
+        seeded_user.email_verified,
+        uuid4(),
+    )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     async with session_factory() as session:
         with pytest.raises(HTTPException) as error:
@@ -497,11 +684,7 @@ async def test_get_current_user_returns_matching_user(
     session_factory: MockSessionFactory,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
-        seeded_user.id,
-        seeded_user.email,
-        seeded_user.email_verified,
-    )
+    token = await create_session_access_token(session_factory, seeded_user)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
     async with session_factory() as session:
         user = await get_current_user(credentials, session)

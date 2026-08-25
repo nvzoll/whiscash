@@ -101,5 +101,6 @@ class TokenClaims(BaseModel):
     email: EmailStr
     email_verified: bool
     typ: Literal["access"]
+    sid: UUID
     iat: int
     exp: int
