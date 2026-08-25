@@ -13,9 +13,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
-COPY main.py models.py schemas.py settings.py alembic.ini entrypoint.sh /app/
-COPY alembic /app/alembic
-
 FROM python:3.14-slim-bookworm
 
 RUN useradd --system --uid 1000 --create-home app
@@ -23,8 +20,8 @@ RUN useradd --system --uid 1000 --create-home app
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
-COPY --from=builder --chown=app:app /app/main.py /app/models.py /app/schemas.py /app/settings.py /app/alembic.ini /app/entrypoint.sh /app/
-COPY --from=builder --chown=app:app /app/alembic /app/alembic
+COPY --chown=app:app main.py models.py schemas.py settings.py alembic.ini entrypoint.sh /app/
+COPY --chown=app:app alembic /app/alembic
 
 RUN chmod +x /app/entrypoint.sh
 
