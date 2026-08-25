@@ -4,7 +4,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      DATABASE_URL: postgresql+asyncpg://auth:auth@postgres:5432/auth
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_EXPIRES_MINUTES: "60"
       JWT_REFRESH_EXPIRES_DAYS: "30"
