@@ -12,11 +12,11 @@ from main import (
     is_refresh_token_active,
     issue_refresh_token,
     parse_refresh_token,
-    purge_expired_refresh_tokens,
     revoke_refresh_token,
     verify_refresh_token_secret,
 )
 from models import RefreshToken, User
+from refresh_token_purge import purge_expired_refresh_tokens
 from tests.mock_db import MockSessionFactory, MockStore
 
 

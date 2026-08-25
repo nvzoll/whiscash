@@ -15,11 +15,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from database import SessionLocal, engine
 from models import RefreshToken, User
-from refresh_token_purge import purge_expired_refresh_tokens
 from schemas import (
     AuthResponse,
     LoginRequest,
@@ -31,6 +29,8 @@ from schemas import (
 )
 from settings import settings
 
+engine = create_async_engine(settings.database_url)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 bearer_scheme = HTTPBearer(auto_error=False)
 
 

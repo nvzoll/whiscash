@@ -27,6 +27,7 @@ services:
   purge:
     build: .
     entrypoint: ["python", "purge.py"]
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://auth:auth@postgres:5432/auth
     depends_on:
