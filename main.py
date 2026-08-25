@@ -73,7 +73,7 @@ def decode_access_token(token: str) -> TokenClaims:
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
             options={
-                "require": ["sub", "email", "email_verified", "iat", "exp"],
+                "require": ["sub", "email", "email_verified", "typ", "iat", "exp"],
             },
         )
         return TokenClaims.model_validate(payload)

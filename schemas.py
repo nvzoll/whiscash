@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
@@ -105,5 +105,6 @@ class TokenClaims(BaseModel):
     sub: UUID
     email: EmailStr
     email_verified: bool
+    typ: Literal["access"]
     iat: int
     exp: int
