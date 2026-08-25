@@ -13,8 +13,8 @@ from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models import RefreshToken, User
@@ -288,6 +288,14 @@ app = FastAPI(title="FastAPI Postgres JWT Auth", lifespan=lifespan)
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="database unavailable",
+        ) from error
     return {"status": "ok"}
 
 
