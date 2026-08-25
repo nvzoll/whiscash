@@ -56,6 +56,17 @@ async def test_login_wrong_password_is_rejected(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_login_short_password_returns_401(client: AsyncClient) -> None:
+    response = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "short"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid email or password"
+
+
+@pytest.mark.asyncio
 async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -226,6 +237,15 @@ async def test_signup_duplicate_email_returns_409(client: AsyncClient) -> None:
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "Email is already registered"
+
+
+@pytest.mark.asyncio
+async def test_signup_rejects_short_password(client: AsyncClient) -> None:
+    response = await client.post(
+        "/auth/signup",
+        json={"email": "ada@example.com", "password": "short"},
+    )
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio

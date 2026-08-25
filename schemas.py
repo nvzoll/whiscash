@@ -60,11 +60,6 @@ class LoginRequest(RequestModel):
     def normalize_email_field(cls, value: Any) -> Any:
         return normalize_email(value) if isinstance(value, str) else value
 
-    @field_validator("password")
-    @classmethod
-    def validate_password_field(cls, value: str) -> str:
-        return validate_password(value)
-
 
 class ProfileUpdate(RequestModel):
     display_name: str | None = Field(default=None, max_length=128)
