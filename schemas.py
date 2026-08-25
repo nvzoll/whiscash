@@ -1,8 +1,16 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    HttpUrl,
+    field_validator,
+    model_validator,
+)
 
 
 def normalize_email(value: str) -> str:
@@ -71,6 +79,12 @@ class ProfileUpdate(RequestModel):
         if value is None or not isinstance(value, str):
             return value
         return normalize_display_name(value)
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> Self:
+        if self.display_name is None and self.photo_url is None:
+            raise ValueError("at least one of display_name or photo_url is required")
+        return self
 
 
 class UserResponse(BaseModel):

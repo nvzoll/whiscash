@@ -436,15 +436,9 @@ async def update_me(
     user: CurrentUserDependency,
     session: SessionDependency,
 ) -> UserResponse:
-    if not payload.model_fields_set:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="At least one profile field is required",
-        )
-
-    if "display_name" in payload.model_fields_set:
+    if payload.display_name is not None:
         user.display_name = payload.display_name
-    if "photo_url" in payload.model_fields_set:
+    if payload.photo_url is not None:
         user.photo_url = str(payload.photo_url)
 
     await session.commit()

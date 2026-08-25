@@ -507,19 +507,33 @@ async def test_patch_me_updates_profile(
     assert me_response.json()["photo_url"] == "https://cdn.example.com/ada.png"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"display_name": None},
+        {"photo_url": None},
+        {"display_name": None, "photo_url": None},
+    ],
+)
 async def test_patch_me_rejects_empty_update(
     client: AsyncClient,
     session_factory: MockSessionFactory,
     seeded_user: User,
+    payload: dict[str, None],
 ) -> None:
     token = await create_session_access_token(session_factory, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
-        json={},
+        json=payload,
     )
     assert response.status_code == 422
-    assert response.json()["detail"] == "At least one profile field is required"
+    assert any(
+        error["type"] == "value_error"
+        and "at least one of display_name or photo_url is required" in error["msg"]
+        for error in response.json()["detail"]
+    )
 
 
 @pytest.mark.parametrize(
