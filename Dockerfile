@@ -20,7 +20,7 @@ RUN useradd --system --uid 1000 --create-home app
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
-COPY --chown=app:app main.py models.py schemas.py settings.py alembic.ini entrypoint.sh /app/
+COPY --chown=app:app main.py models.py schemas.py settings.py database.py refresh_token_purge.py purge.py alembic.ini entrypoint.sh /app/
 COPY --chown=app:app alembic /app/alembic
 
 RUN chmod +x /app/entrypoint.sh

@@ -40,7 +40,6 @@ async def create_session_id(
         return refresh_token.family_id
 
 
-@pytest.mark.asyncio
 async def test_login_unknown_email_hashes_random_dummy(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -73,7 +72,6 @@ async def test_login_unknown_email_hashes_random_dummy(
     assert verified == []
 
 
-@pytest.mark.asyncio
 async def test_login_wrong_password_is_rejected(client: AsyncClient) -> None:
     response = await client.post(
         "/auth/login",
@@ -84,7 +82,6 @@ async def test_login_wrong_password_is_rejected(client: AsyncClient) -> None:
     assert response.json()["detail"] == "Invalid email or password"
 
 
-@pytest.mark.asyncio
 async def test_login_short_password_returns_401(client: AsyncClient) -> None:
     response = await client.post(
         "/auth/login",
@@ -95,7 +92,6 @@ async def test_login_short_password_returns_401(client: AsyncClient) -> None:
     assert response.json()["detail"] == "Invalid email or password"
 
 
-@pytest.mark.asyncio
 async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -125,7 +121,6 @@ async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
     assert stolen_successor_response.status_code == 401
 
 
-@pytest.mark.asyncio
 async def test_refresh_reuse_does_not_revoke_other_sessions(
     client: AsyncClient,
 ) -> None:
@@ -161,7 +156,6 @@ async def test_refresh_reuse_does_not_revoke_other_sessions(
     assert other_session_response.status_code == 200
 
 
-@pytest.mark.asyncio
 async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -194,7 +188,6 @@ async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> 
     assert follow_up_response.status_code == 401
 
 
-@pytest.mark.asyncio
 async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -215,7 +208,6 @@ async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
     assert refresh_response.status_code == 401
 
 
-@pytest.mark.asyncio
 async def test_logout_invalidates_access_token(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -243,7 +235,6 @@ async def test_logout_invalidates_access_token(client: AsyncClient) -> None:
     assert_invalid_access_token(me_after_logout)
 
 
-@pytest.mark.asyncio
 async def test_logout_does_not_invalidate_other_session_access_token(
     client: AsyncClient,
 ) -> None:
@@ -276,7 +267,6 @@ async def test_logout_does_not_invalidate_other_session_access_token(
     assert second_me.status_code == 200
 
 
-@pytest.mark.asyncio
 async def test_refresh_keeps_access_token_valid(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -298,7 +288,6 @@ async def test_refresh_keeps_access_token_valid(client: AsyncClient) -> None:
     assert me_response.status_code == 200
 
 
-@pytest.mark.asyncio
 async def test_refresh_reuse_invalidates_session_access_tokens(
     client: AsyncClient,
 ) -> None:
@@ -346,7 +335,6 @@ def assert_unauthorized_gate(error: HTTPException) -> None:
     assert error.headers == {"WWW-Authenticate": "Bearer"}
 
 
-@pytest.mark.asyncio
 async def test_signup_returns_tokens_and_current_user(client: AsyncClient) -> None:
     response = await client.post(
         "/auth/signup",
@@ -377,7 +365,6 @@ async def test_signup_returns_tokens_and_current_user(client: AsyncClient) -> No
     assert me["display_name"] == "Ada"
 
 
-@pytest.mark.asyncio
 async def test_signup_duplicate_email_returns_409(client: AsyncClient) -> None:
     response = await client.post(
         "/auth/signup",
@@ -387,7 +374,6 @@ async def test_signup_duplicate_email_returns_409(client: AsyncClient) -> None:
     assert response.json()["detail"] == "Email is already registered"
 
 
-@pytest.mark.asyncio
 async def test_signup_rejects_short_password(client: AsyncClient) -> None:
     response = await client.post(
         "/auth/signup",
@@ -396,7 +382,6 @@ async def test_signup_rejects_short_password(client: AsyncClient) -> None:
     assert response.status_code == 422
 
 
-@pytest.mark.asyncio
 async def test_get_me_returns_authenticated_user(client: AsyncClient) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -434,7 +419,6 @@ async def test_get_me_returns_authenticated_user(client: AsyncClient) -> None:
         "malformed-jwt",
     ],
 )
-@pytest.mark.asyncio
 async def test_get_me_rejects_invalid_authorization(
     client: AsyncClient,
     headers: dict[str, str] | None,
@@ -443,7 +427,6 @@ async def test_get_me_rejects_invalid_authorization(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_get_me_rejects_expired_access_token(
     client: AsyncClient,
     seeded_user: User,
@@ -462,7 +445,6 @@ async def test_get_me_rejects_expired_access_token(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_get_me_rejects_access_token_for_unknown_user(
     client: AsyncClient,
 ) -> None:
@@ -479,7 +461,6 @@ async def test_get_me_rejects_access_token_for_unknown_user(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_get_me_rejects_access_token_for_unknown_session(
     client: AsyncClient,
     seeded_user: User,
@@ -497,7 +478,6 @@ async def test_get_me_rejects_access_token_for_unknown_session(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_patch_me_updates_profile(
     client: AsyncClient,
     session_factory: MockSessionFactory,
@@ -527,7 +507,6 @@ async def test_patch_me_updates_profile(
     assert me_response.json()["photo_url"] == "https://cdn.example.com/ada.png"
 
 
-@pytest.mark.asyncio
 async def test_patch_me_rejects_empty_update(
     client: AsyncClient,
     session_factory: MockSessionFactory,
@@ -558,7 +537,6 @@ async def test_patch_me_rejects_empty_update(
         "malformed-jwt",
     ],
 )
-@pytest.mark.asyncio
 async def test_patch_me_rejects_invalid_authorization(
     client: AsyncClient,
     headers: dict[str, str],
@@ -571,7 +549,6 @@ async def test_patch_me_rejects_invalid_authorization(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_patch_me_rejects_expired_access_token(
     client: AsyncClient,
     seeded_user: User,
@@ -591,7 +568,6 @@ async def test_patch_me_rejects_expired_access_token(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_patch_me_rejects_access_token_for_unknown_user(
     client: AsyncClient,
 ) -> None:
@@ -609,7 +585,6 @@ async def test_patch_me_rejects_access_token_for_unknown_user(
     assert_invalid_access_token(response)
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_rejects_missing_credentials(
     session_factory: MockSessionFactory,
 ) -> None:
@@ -619,7 +594,6 @@ async def test_get_current_user_rejects_missing_credentials(
     assert_unauthorized_gate(error.value)
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_rejects_non_bearer_scheme(
     session_factory: MockSessionFactory,
 ) -> None:
@@ -630,7 +604,6 @@ async def test_get_current_user_rejects_non_bearer_scheme(
     assert_unauthorized_gate(error.value)
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_rejects_invalid_token(
     session_factory: MockSessionFactory,
 ) -> None:
@@ -644,7 +617,6 @@ async def test_get_current_user_rejects_invalid_token(
     assert_unauthorized_gate(error.value)
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_rejects_unknown_user(
     session_factory: MockSessionFactory,
 ) -> None:
@@ -661,7 +633,6 @@ async def test_get_current_user_rejects_unknown_user(
     assert_unauthorized_gate(error.value)
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_rejects_unknown_session(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -679,7 +650,6 @@ async def test_get_current_user_rejects_unknown_session(
     assert_unauthorized_gate(error.value)
 
 
-@pytest.mark.asyncio
 async def test_get_current_user_returns_matching_user(
     session_factory: MockSessionFactory,
     seeded_user: User,

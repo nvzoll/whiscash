@@ -18,7 +18,7 @@ uv sync --group dev
 mise run start
 ```
 
-`mise run start` builds and starts the API on [http://localhost:8000](http://localhost:8000) and Postgres on `localhost:5432`. The API container runs `alembic upgrade head` before uvicorn.
+`mise run start` builds and starts the API on [http://localhost:8000](http://localhost:8000), a refresh-token purge sidecar, and Postgres on `localhost:5432`. The API container runs `alembic upgrade head` before uvicorn.
 
 OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 

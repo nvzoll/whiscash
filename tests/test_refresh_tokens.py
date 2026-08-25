@@ -12,11 +12,12 @@ from main import (
     is_refresh_token_active,
     issue_refresh_token,
     parse_refresh_token,
+    purge_expired_refresh_tokens,
     revoke_refresh_token,
     verify_refresh_token_secret,
 )
 from models import RefreshToken, User
-from tests.mock_db import MockSessionFactory
+from tests.mock_db import MockSessionFactory, MockStore
 
 
 def test_hash_refresh_token_secret_is_deterministic() -> None:
@@ -82,7 +83,6 @@ def test_is_refresh_token_active() -> None:
     assert not is_refresh_token_active(expired, now)
 
 
-@pytest.mark.asyncio
 async def test_issue_and_validate_refresh_token(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -100,7 +100,6 @@ async def test_issue_and_validate_refresh_token(
         assert user.email == "user@example.com"
 
 
-@pytest.mark.asyncio
 async def test_refresh_token_reuse_revokes_family(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -133,7 +132,6 @@ async def test_refresh_token_reuse_revokes_family(
         assert is_refresh_token_active(surviving)
 
 
-@pytest.mark.asyncio
 async def test_invalid_refresh_secret_does_not_revoke_family(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -163,7 +161,6 @@ async def test_invalid_refresh_secret_does_not_revoke_family(
         assert is_refresh_token_active(surviving)
 
 
-@pytest.mark.asyncio
 async def test_expired_refresh_token_does_not_revoke_family(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -194,7 +191,6 @@ async def test_expired_refresh_token_does_not_revoke_family(
         assert is_refresh_token_active(surviving)
 
 
-@pytest.mark.asyncio
 async def test_revoke_refresh_token_claims_only_once(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -224,7 +220,6 @@ async def test_revoke_refresh_token_claims_only_once(
     assert len(failures) == 1
 
 
-@pytest.mark.asyncio
 async def test_expired_refresh_token_is_rejected(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -246,3 +241,124 @@ async def test_expired_refresh_token_is_rejected(
         with pytest.raises(HTTPException) as error:
             await get_valid_refresh_token(session, token)
         assert error.value.status_code == 401
+
+
+async def test_purge_expired_refresh_tokens_deletes_expired_only(
+    session_factory: MockSessionFactory,
+    mock_store: MockStore,
+    seeded_user: User,
+) -> None:
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        expired = RefreshToken(
+            user_id=user.id,
+            token_hash=hash_refresh_token_secret("expired"),
+            expires_at=now - timedelta(seconds=1),
+        )
+        expired_revoked = RefreshToken(
+            user_id=user.id,
+            token_hash=hash_refresh_token_secret("expired-revoked"),
+            expires_at=now - timedelta(seconds=1),
+            revoked_at=now - timedelta(hours=1),
+        )
+        active = RefreshToken(
+            user_id=user.id,
+            token_hash=hash_refresh_token_secret("active"),
+            expires_at=now + timedelta(days=1),
+        )
+        revoked_unexpired = RefreshToken(
+            user_id=user.id,
+            token_hash=hash_refresh_token_secret("revoked"),
+            expires_at=now + timedelta(days=1),
+            revoked_at=now,
+        )
+        session.add(expired)
+        session.add(expired_revoked)
+        session.add(active)
+        session.add(revoked_unexpired)
+        await session.commit()
+        active_id = active.id
+        revoked_unexpired_id = revoked_unexpired.id
+        expired_id = expired.id
+        expired_revoked_id = expired_revoked.id
+
+    async with session_factory() as session:
+        deleted = await purge_expired_refresh_tokens(session, now=now, limit=1000)
+        await session.commit()
+
+    assert deleted == 2
+    assert expired_id not in mock_store.refresh_tokens
+    assert expired_revoked_id not in mock_store.refresh_tokens
+    assert active_id in mock_store.refresh_tokens
+    assert revoked_unexpired_id in mock_store.refresh_tokens
+
+
+async def test_purge_expired_refresh_tokens_batches(
+    session_factory: MockSessionFactory,
+    mock_store: MockStore,
+    seeded_user: User,
+) -> None:
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        for index in range(5):
+            session.add(
+                RefreshToken(
+                    user_id=user.id,
+                    token_hash=hash_refresh_token_secret(f"expired-{index}"),
+                    expires_at=now - timedelta(seconds=1),
+                )
+            )
+        session.add(
+            RefreshToken(
+                user_id=user.id,
+                token_hash=hash_refresh_token_secret("active"),
+                expires_at=now + timedelta(days=1),
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        deleted = await purge_expired_refresh_tokens(session, now=now, limit=2)
+        await session.commit()
+
+    assert deleted == 5
+    assert len(mock_store.refresh_tokens) == 1
+    remaining = next(iter(mock_store.refresh_tokens.values()))
+    assert remaining.expires_at > now
+
+
+async def test_purge_keeps_revoked_unexpired_for_reuse_detection(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        original = await issue_refresh_token(session, user)
+        await session.commit()
+        refresh_token, _ = await get_valid_refresh_token(session, original)
+        assert await revoke_refresh_token(session, refresh_token)
+        rotated = await issue_refresh_token(
+            session,
+            user,
+            family_id=refresh_token.family_id,
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        deleted = await purge_expired_refresh_tokens(session, limit=1000)
+        await session.commit()
+        assert deleted == 0
+
+    async with session_factory() as session:
+        with pytest.raises(HTTPException) as error:
+            await get_valid_refresh_token(session, original)
+        assert error.value.status_code == 401
+
+        with pytest.raises(HTTPException) as rotated_error:
+            await get_valid_refresh_token(session, rotated)
+        assert rotated_error.value.status_code == 401

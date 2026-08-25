@@ -58,7 +58,11 @@ class RefreshToken(Base):
     )
     family_id: Mapped[UUID] = mapped_column(Uuid, index=True, default=uuid4)
     token_hash: Mapped[str] = mapped_column(String(64))
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
     revoked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
