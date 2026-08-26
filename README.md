@@ -1,6 +1,8 @@
 # Whiscash
 
-FastAPI service for email/password auth with JWT access tokens, rotating refresh tokens, and PostgreSQL.
+Service for first-party, non-delegated dual-token authentication (JWT + refresh token).
+
+FastAPI + Postgres.
 
 ## Requirements
 
