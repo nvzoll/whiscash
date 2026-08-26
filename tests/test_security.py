@@ -4,12 +4,8 @@ from uuid import uuid4
 import jwt
 import pytest
 
-from main import (
-    create_access_token,
-    decode_access_token,
-    hash_password,
-    verify_password,
-)
+from auth.access_token import create_access_token, decode_access_token
+from auth.password import hash_password, verify_password
 from settings import settings
 
 

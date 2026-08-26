@@ -1,23 +1,25 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
-from hashlib import sha256
-from hmac import compare_digest
-from hmac import new as hmac_new
 from secrets import token_urlsafe
 from typing import Annotated
-from uuid import UUID, uuid4
 
-import bcrypt
-import jwt
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import ValidationError
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth.access_token import create_access_token, decode_access_token
+from auth.password import hash_password, verify_password
+from auth.refresh_token import (
+    get_active_session_token,
+    get_valid_refresh_token,
+    invalid_refresh_token,
+    issue_refresh_token,
+    revoke_refresh_token,
+)
+from db import SessionDependency, engine
 from models import RefreshToken, User
 from schemas import (
     AuthResponse,
@@ -25,244 +27,12 @@ from schemas import (
     ProfileUpdate,
     RefreshRequest,
     SignupRequest,
-    TokenClaims,
     UserResponse,
 )
 from settings import settings
 
-engine = create_async_engine(settings.database_url)
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 bearer_scheme = HTTPBearer(auto_error=False)
 
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        return bcrypt.checkpw(
-            password.encode("utf-8"),
-            password_hash.encode("utf-8"),
-        )
-    except ValueError:
-        return False
-
-
-def create_access_token(
-    user_id: UUID,
-    email: str,
-    email_verified: bool,
-    session_id: UUID,
-    expires_minutes: int = settings.jwt_expires_minutes,
-) -> str:
-    now = datetime.now(UTC)
-    payload = {
-        "sub": str(user_id),
-        "email": email,
-        "email_verified": email_verified,
-        "typ": "access",
-        "sid": str(session_id),
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=expires_minutes)).timestamp()),
-    }
-
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
-
-
-def decode_access_token(token: str) -> TokenClaims:
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-            options={
-                "require": [
-                    "sub",
-                    "email",
-                    "email_verified",
-                    "typ",
-                    "sid",
-                    "iat",
-                    "exp",
-                ],
-            },
-        )
-        return TokenClaims.model_validate(payload)
-    except (jwt.InvalidTokenError, ValidationError) as error:
-        raise ValueError("invalid or expired access token") from error
-
-
-def hash_refresh_token_secret(secret: str) -> str:
-    return sha256(secret.encode("utf-8")).hexdigest()
-
-
-def derive_refresh_token_secret(token_id: UUID) -> str:
-    return hmac_new(
-        settings.jwt_secret.encode("utf-8"),
-        token_id.bytes,
-        sha256,
-    ).hexdigest()
-
-
-def build_refresh_token_value(token_id: UUID, secret: str) -> str:
-    return f"{token_id}.{secret}"
-
-
-def parse_refresh_token(token: str) -> tuple[UUID, str]:
-    parts = token.split(".", 1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError("invalid refresh token")
-
-    try:
-        token_id = UUID(parts[0])
-    except ValueError as error:
-        raise ValueError("invalid refresh token") from error
-
-    return token_id, parts[1]
-
-
-def verify_refresh_token_secret(secret: str, token_hash: str) -> bool:
-    return compare_digest(hash_refresh_token_secret(secret), token_hash)
-
-
-def is_refresh_token_active(
-    refresh_token: RefreshToken,
-    now: datetime | None = None,
-) -> bool:
-    if refresh_token.revoked_at is not None:
-        return False
-
-    if (expires_at := refresh_token.expires_at).tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-
-    current_time = now or datetime.now(UTC)
-    return expires_at > current_time
-
-
-async def issue_refresh_token(
-    session: AsyncSession,
-    user: User,
-) -> tuple[UUID, str]:
-    token_id = uuid4()
-
-    secret = derive_refresh_token_secret(token_id)
-    refresh_token = RefreshToken(
-        id=token_id,
-        user_id=user.id,
-        token_hash=hash_refresh_token_secret(secret),
-        expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expires_days),
-    )
-
-    session.add(refresh_token)
-    await session.flush()
-
-    return token_id, build_refresh_token_value(token_id, secret)
-
-
-def invalid_refresh_token() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired refresh token",
-    )
-
-
-async def get_refresh_token_for_user(
-    session: AsyncSession,
-    token: str,
-) -> tuple[RefreshToken, User]:
-    try:
-        token_id, secret = parse_refresh_token(token)
-    except ValueError as error:
-        raise invalid_refresh_token() from error
-
-    if (
-        refresh_token := await session.get(
-            RefreshToken,
-            token_id,
-            with_for_update=True,
-            populate_existing=True,
-        )
-    ) is None:
-        raise invalid_refresh_token()
-
-    if not verify_refresh_token_secret(
-        secret,
-        refresh_token.token_hash,
-    ):
-        raise invalid_refresh_token()
-
-    if (user := await session.get(User, refresh_token.user_id)) is None:
-        raise invalid_refresh_token()
-
-    return refresh_token, user
-
-
-async def get_valid_refresh_token(
-    session: AsyncSession,
-    token: str,
-) -> tuple[RefreshToken, User]:
-    refresh_token, user = await get_refresh_token_for_user(session, token)
-    if not is_refresh_token_active(refresh_token):
-        raise invalid_refresh_token()
-
-    return refresh_token, user
-
-
-async def revoke_refresh_token(
-    session: AsyncSession,
-    refresh_token: RefreshToken,
-) -> bool:
-    now = datetime.now(UTC)
-
-    result = await session.execute(
-        update(RefreshToken)
-        .where(
-            RefreshToken.id == refresh_token.id,
-            RefreshToken.revoked_at.is_(None),
-        )
-        .values(revoked_at=now)
-        .returning(RefreshToken.id)
-    )
-
-    if result.scalar_one_or_none() is None:
-        return False
-
-    refresh_token.revoked_at = now
-    return True
-
-
-async def get_active_session_token(
-    session: AsyncSession,
-    session_id: UUID,
-) -> RefreshToken | None:
-    if (refresh_token := await session.get(RefreshToken, session_id)) is None:
-        return None
-
-    if not is_refresh_token_active(refresh_token):
-        return None
-
-    return refresh_token
-
-
-async def create_auth_response(session: AsyncSession, user: User) -> AuthResponse:
-    session_id, refresh_token = await issue_refresh_token(session, user)
-    await session.commit()
-
-    return AuthResponse(
-        access_token=create_access_token(user.id, user.email, user.email_verified, session_id),
-        refresh_token=refresh_token,
-        expires_in=settings.jwt_expires_minutes * 60,
-        user=UserResponse.model_validate(user),
-    )
-
-
-async def get_session() -> AsyncIterator[AsyncSession]:
-    async with SessionLocal() as session:
-        yield session
-
-
-SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 CredentialsDependency = Annotated[
     HTTPAuthorizationCredentials | None,
     Depends(bearer_scheme),
@@ -297,6 +67,18 @@ async def get_current_user(
 
 
 CurrentUserDependency = Annotated[User, Depends(get_current_user)]
+
+
+async def create_auth_response(session: AsyncSession, user: User) -> AuthResponse:
+    session_id, refresh_token = await issue_refresh_token(session, user)
+    await session.commit()
+
+    return AuthResponse(
+        access_token=create_access_token(user.id, user.email, user.email_verified, session_id),
+        refresh_token=refresh_token,
+        expires_in=settings.jwt_expires_minutes * 60,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @asynccontextmanager

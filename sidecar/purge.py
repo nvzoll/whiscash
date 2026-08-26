@@ -4,11 +4,10 @@ import sys
 from datetime import UTC, datetime
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from refresh_token_purge import purge_expired_refresh_tokens
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-from refresh_token_purge import purge_expired_refresh_tokens
 
 DEFAULT_INTERVAL_SECONDS = 3600
 DEFAULT_BATCH_SIZE = 1000

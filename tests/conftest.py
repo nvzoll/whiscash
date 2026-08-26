@@ -9,7 +9,9 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://auth:auth@localhost:
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from main import app, get_session, hash_password
+from auth.password import hash_password
+from db import get_session
+from main import app
 from models import User
 from tests.mock_db import MockSessionFactory, MockStore, override_get_session
 

@@ -20,17 +20,11 @@ RUN useradd --system --uid 1000 --create-home app
 WORKDIR /app
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
-COPY --chown=app:app *.py alembic.ini entrypoint.sh /app/
-COPY --chown=app:app alembic /app/alembic
-COPY --chown=app:app auth /app/auth
-
-RUN chmod +x /app/entrypoint.sh
+COPY --chown=app:app *.py /app/
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 USER app
 
-EXPOSE 8000
-
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["python", "purge.py"]

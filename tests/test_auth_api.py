@@ -7,7 +7,9 @@ from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from httpx import AsyncClient, Response
 
-from main import create_access_token, get_current_user, hash_password, verify_password
+from auth.access_token import create_access_token
+from auth.password import hash_password, verify_password
+from main import get_current_user
 from models import RefreshToken, User
 from tests.mock_db import MockSessionFactory
 

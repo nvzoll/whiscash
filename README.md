@@ -111,3 +111,13 @@ uv run pytest
 ```
 
 API tests use an in-memory mock session and do not need Postgres.
+
+The purge sidecar (`sidecar/`) is a separate uv project with its own
+dependencies and tests:
+
+```sh
+cd sidecar
+uv run pytest
+```
+
+Sidecar tests run against an in-memory SQLite engine and do not need Postgres either.

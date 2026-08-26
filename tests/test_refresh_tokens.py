@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from main import (
+from auth.refresh_token import (
     build_refresh_token_value,
     derive_refresh_token_secret,
     get_valid_refresh_token,
@@ -17,8 +17,7 @@ from main import (
     verify_refresh_token_secret,
 )
 from models import RefreshToken, User
-from refresh_token_purge import purge_expired_refresh_tokens
-from tests.mock_db import MockSessionFactory, MockStore
+from tests.mock_db import MockSessionFactory
 
 
 def test_hash_refresh_token_secret_is_deterministic() -> None:
@@ -179,91 +178,3 @@ async def test_expired_refresh_token_is_rejected(
         with pytest.raises(HTTPException) as error:
             await get_valid_refresh_token(session, token)
         assert error.value.status_code == 401
-
-
-async def test_purge_expired_refresh_tokens_deletes_expired_only(
-    session_factory: MockSessionFactory,
-    mock_store: MockStore,
-    seeded_user: User,
-) -> None:
-    now = datetime.now(UTC)
-    async with session_factory() as session:
-        user = await session.get(User, seeded_user.id)
-        assert user is not None
-        expired = RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token_secret("expired"),
-            expires_at=now - timedelta(seconds=1),
-        )
-        expired_revoked = RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token_secret("expired-revoked"),
-            expires_at=now - timedelta(seconds=1),
-            revoked_at=now - timedelta(hours=1),
-        )
-        active = RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token_secret("active"),
-            expires_at=now + timedelta(days=1),
-        )
-        revoked_unexpired = RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token_secret("revoked"),
-            expires_at=now + timedelta(days=1),
-            revoked_at=now,
-        )
-        session.add(expired)
-        session.add(expired_revoked)
-        session.add(active)
-        session.add(revoked_unexpired)
-        await session.commit()
-        active_id = active.id
-        revoked_unexpired_id = revoked_unexpired.id
-        expired_id = expired.id
-        expired_revoked_id = expired_revoked.id
-
-    async with session_factory() as session:
-        deleted = await purge_expired_refresh_tokens(session, now=now, limit=1000)
-        await session.commit()
-
-    assert deleted == 2
-    assert expired_id not in mock_store.refresh_tokens
-    assert expired_revoked_id not in mock_store.refresh_tokens
-    assert active_id in mock_store.refresh_tokens
-    assert revoked_unexpired_id in mock_store.refresh_tokens
-
-
-async def test_purge_expired_refresh_tokens_batches(
-    session_factory: MockSessionFactory,
-    mock_store: MockStore,
-    seeded_user: User,
-) -> None:
-    now = datetime.now(UTC)
-    async with session_factory() as session:
-        user = await session.get(User, seeded_user.id)
-        assert user is not None
-        for index in range(5):
-            session.add(
-                RefreshToken(
-                    user_id=user.id,
-                    token_hash=hash_refresh_token_secret(f"expired-{index}"),
-                    expires_at=now - timedelta(seconds=1),
-                )
-            )
-        session.add(
-            RefreshToken(
-                user_id=user.id,
-                token_hash=hash_refresh_token_secret("active"),
-                expires_at=now + timedelta(days=1),
-            )
-        )
-        await session.commit()
-
-    async with session_factory() as session:
-        deleted = await purge_expired_refresh_tokens(session, now=now, limit=2)
-        await session.commit()
-
-    assert deleted == 5
-    assert len(mock_store.refresh_tokens) == 1
-    remaining = next(iter(mock_store.refresh_tokens.values()))
-    assert remaining.expires_at > now
