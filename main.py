@@ -130,22 +130,22 @@ def is_refresh_token_active(
     refresh_token: RefreshToken,
     now: datetime | None = None,
 ) -> bool:
-    current_time = now or datetime.now(UTC)
     if refresh_token.revoked_at is not None:
         return False
 
-    expires_at = refresh_token.expires_at
-    if expires_at.tzinfo is None:
+    if (expires_at := refresh_token.expires_at).tzinfo is None:
         expires_at = expires_at.replace(tzinfo=UTC)
 
+    current_time = now or datetime.now(UTC)
     return expires_at > current_time
 
 
 async def issue_refresh_token(
     session: AsyncSession,
     user: User,
-) -> str:
+) -> tuple[UUID, str]:
     token_id = uuid4()
+
     secret = derive_refresh_token_secret(token_id)
     refresh_token = RefreshToken(
         id=token_id,
@@ -153,9 +153,18 @@ async def issue_refresh_token(
         token_hash=hash_refresh_token_secret(secret),
         expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expires_days),
     )
+
     session.add(refresh_token)
     await session.flush()
-    return build_refresh_token_value(refresh_token.id, secret)
+
+    return token_id, build_refresh_token_value(token_id, secret)
+
+
+def invalid_refresh_token() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired refresh token",
+    )
 
 
 async def get_refresh_token_for_user(
@@ -165,30 +174,27 @@ async def get_refresh_token_for_user(
     try:
         token_id, secret = parse_refresh_token(token)
     except ValueError as error:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        ) from error
-    refresh_token = await session.get(
-        RefreshToken,
-        token_id,
-        with_for_update=True,
-        populate_existing=True,
-    )
-    if refresh_token is None or not verify_refresh_token_secret(
+        raise invalid_refresh_token() from error
+
+    if (
+        refresh_token := await session.get(
+            RefreshToken,
+            token_id,
+            with_for_update=True,
+            populate_existing=True,
+        )
+    ) is None:
+        raise invalid_refresh_token()
+
+    if not verify_refresh_token_secret(
         secret,
         refresh_token.token_hash,
     ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
-    user = await session.get(User, refresh_token.user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
+        raise invalid_refresh_token()
+
+    if (user := await session.get(User, refresh_token.user_id)) is None:
+        raise invalid_refresh_token()
+
     return refresh_token, user
 
 
@@ -198,10 +204,8 @@ async def get_valid_refresh_token(
 ) -> tuple[RefreshToken, User]:
     refresh_token, user = await get_refresh_token_for_user(session, token)
     if not is_refresh_token_active(refresh_token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
+        raise invalid_refresh_token()
+
     return refresh_token, user
 
 
@@ -210,6 +214,7 @@ async def revoke_refresh_token(
     refresh_token: RefreshToken,
 ) -> bool:
     now = datetime.now(UTC)
+
     result = await session.execute(
         update(RefreshToken)
         .where(
@@ -219,6 +224,7 @@ async def revoke_refresh_token(
         .values(revoked_at=now)
         .returning(RefreshToken.id)
     )
+
     if result.scalar_one_or_none() is None:
         return False
 
@@ -230,16 +236,19 @@ async def get_active_session_token(
     session: AsyncSession,
     session_id: UUID,
 ) -> RefreshToken | None:
-    refresh_token = await session.get(RefreshToken, session_id)
-    if refresh_token is None or not is_refresh_token_active(refresh_token):
+    if (refresh_token := await session.get(RefreshToken, session_id)) is None:
         return None
+
+    if not is_refresh_token_active(refresh_token):
+        return None
+
     return refresh_token
 
 
 async def create_auth_response(session: AsyncSession, user: User) -> AuthResponse:
-    refresh_token = await issue_refresh_token(session, user)
+    session_id, refresh_token = await issue_refresh_token(session, user)
     await session.commit()
-    session_id, _ = parse_refresh_token(refresh_token)
+
     return AuthResponse(
         access_token=create_access_token(user.id, user.email, user.email_verified, session_id),
         refresh_token=refresh_token,
@@ -269,17 +278,21 @@ async def get_current_user(
         detail="Invalid or expired access token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise unauthorized
+
     try:
         claims = decode_access_token(credentials.credentials)
     except ValueError as error:
         raise unauthorized from error
-    user = await session.get(User, claims.sub)
-    if user is None:
+
+    if (user := await session.get(User, claims.sub)) is None:
         raise unauthorized
+
     if await get_active_session_token(session, claims.sid) is None:
         raise unauthorized
+
     return user
 
 
@@ -305,6 +318,7 @@ async def health() -> dict[str, str]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="database unavailable",
         ) from error
+
     return {"status": "ok"}
 
 
@@ -347,7 +361,6 @@ async def login(
 ) -> AuthResponse:
     if (user := await session.scalar(select(User).where(User.email == str(payload.email)))) is None:
         dummy = token_urlsafe(32)
-
         await run_in_threadpool(hash_password, dummy)
 
         raise HTTPException(
@@ -360,6 +373,7 @@ async def login(
         payload.password,
         user.password_hash,
     )
+
     if not password_matches:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -376,10 +390,9 @@ async def refresh(
 ) -> AuthResponse:
     refresh_token, user = await get_valid_refresh_token(session, payload.refresh_token)
 
-    rotated = await issue_refresh_token(session, user)
+    rotated_id, rotated = await issue_refresh_token(session, user)
 
     if not await revoke_refresh_token(session, refresh_token):
-        rotated_id, _ = parse_refresh_token(rotated)
         if (
             unused := await session.get(
                 RefreshToken,
@@ -389,14 +402,11 @@ async def refresh(
         ) is not None:
             await revoke_refresh_token(session, unused)
         await session.commit()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
+
+        raise invalid_refresh_token()
 
     await session.commit()
 
-    rotated_id, _ = parse_refresh_token(rotated)
     return AuthResponse(
         access_token=create_access_token(user.id, user.email, user.email_verified, rotated_id),
         refresh_token=rotated,
@@ -412,10 +422,7 @@ async def logout(
 ) -> Response:
     refresh_token, _ = await get_valid_refresh_token(session, payload.refresh_token)
     if not await revoke_refresh_token(session, refresh_token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token",
-        )
+        raise invalid_refresh_token()
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

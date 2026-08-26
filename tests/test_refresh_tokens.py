@@ -100,7 +100,7 @@ async def test_issue_and_validate_refresh_token(
     async with session_factory() as session:
         user = await session.get(User, seeded_user.id)
         assert user is not None
-        token = await issue_refresh_token(session, user)
+        _, token = await issue_refresh_token(session, user)
         await session.commit()
 
     async with session_factory() as session:
@@ -117,9 +117,9 @@ async def test_issue_refresh_token_does_not_persist_secret(
     async with session_factory() as session:
         user = await session.get(User, seeded_user.id)
         assert user is not None
-        token = await issue_refresh_token(session, user)
+        token_id, token = await issue_refresh_token(session, user)
         await session.commit()
-        token_id, secret = parse_refresh_token(token)
+        _, secret = parse_refresh_token(token)
         stored = await session.get(RefreshToken, token_id)
         assert stored is not None
         assert stored.token_hash != secret
@@ -136,7 +136,7 @@ async def test_revoke_refresh_token_claims_only_once(
     async with session_factory() as session:
         user = await session.get(User, seeded_user.id)
         assert user is not None
-        token = await issue_refresh_token(session, user)
+        _, token = await issue_refresh_token(session, user)
         await session.commit()
 
     async def claim() -> bool:
