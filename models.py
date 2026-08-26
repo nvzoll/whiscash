@@ -56,7 +56,6 @@ class RefreshToken(Base):
         ForeignKey("user.id", ondelete="CASCADE"),
         index=True,
     )
-    family_id: Mapped[UUID] = mapped_column(Uuid, index=True, default=uuid4)
     token_hash: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -67,13 +66,6 @@ class RefreshToken(Base):
         DateTime(timezone=True),
         nullable=True,
         default=None,
-    )
-    replaced_by_id: Mapped[UUID | None] = mapped_column(
-        Uuid,
-        ForeignKey("refresh_token.id", ondelete="SET NULL"),
-        nullable=True,
-        default=None,
-        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

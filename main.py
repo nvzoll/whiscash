@@ -144,31 +144,18 @@ def is_refresh_token_active(
 async def issue_refresh_token(
     session: AsyncSession,
     user: User,
-    family_id: UUID | None = None,
 ) -> str:
     token_id = uuid4()
     secret = derive_refresh_token_secret(token_id)
     refresh_token = RefreshToken(
         id=token_id,
         user_id=user.id,
-        family_id=family_id or uuid4(),
         token_hash=hash_refresh_token_secret(secret),
         expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expires_days),
     )
     session.add(refresh_token)
     await session.flush()
     return build_refresh_token_value(refresh_token.id, secret)
-
-
-def is_within_reuse_grace(
-    revoked_at: datetime,
-    now: datetime | None = None,
-) -> bool:
-    current_time = now or datetime.now(UTC)
-    if revoked_at.tzinfo is None:
-        revoked_at = revoked_at.replace(tzinfo=UTC)
-    elapsed = current_time - revoked_at
-    return elapsed <= timedelta(seconds=settings.jwt_refresh_reuse_grace_seconds)
 
 
 async def get_refresh_token_for_user(
@@ -218,150 +205,43 @@ async def get_valid_refresh_token(
     return refresh_token, user
 
 
-async def reuse_grace_auth_response(
-    session: AsyncSession,
-    refresh_token: RefreshToken,
-    user: User,
-) -> AuthResponse | None:
-    if refresh_token.revoked_at is None or not is_within_reuse_grace(refresh_token.revoked_at):
-        return None
-
-    if not (successor_id := refresh_token.replaced_by_id):
-        return None
-
-    successor = await session.get(
-        RefreshToken,
-        successor_id,
-        populate_existing=True,
-    )
-
-    if (
-        successor is None
-        or successor.user_id != refresh_token.user_id
-        or successor.family_id != refresh_token.family_id
-        or not is_refresh_token_active(successor)
-    ):
-        return None
-
-    secret = derive_refresh_token_secret(successor.id)
-    if not verify_refresh_token_secret(secret, successor.token_hash):
-        return None
-
-    return AuthResponse(
-        access_token=create_access_token(
-            user.id,
-            user.email,
-            user.email_verified,
-            refresh_token.family_id,
-        ),
-        refresh_token=build_refresh_token_value(successor.id, secret),
-        expires_in=settings.jwt_expires_minutes * 60,
-        user=UserResponse.model_validate(user),
-    )
-
-
-async def reject_refresh_token_reuse(
-    session: AsyncSession,
-    refresh_token: RefreshToken,
-    user: User,
-) -> AuthResponse:
-    replayed = await reuse_grace_auth_response(session, refresh_token, user)
-    if replayed is not None:
-        return replayed
-    await revoke_refresh_token_family(
-        session,
-        user_id=refresh_token.user_id,
-        family_id=refresh_token.family_id,
-    )
-    await session.commit()
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired refresh token",
-    )
-
-
-async def revoke_refresh_token_family(
-    session: AsyncSession,
-    *,
-    user_id: UUID,
-    family_id: UUID,
-) -> None:
-    now = datetime.now(UTC)
-    await session.execute(
-        update(RefreshToken)
-        .where(
-            RefreshToken.user_id == user_id,
-            RefreshToken.family_id == family_id,
-            RefreshToken.revoked_at.is_(None),
-        )
-        .values(revoked_at=now)
-    )
-
-
 async def revoke_refresh_token(
     session: AsyncSession,
     refresh_token: RefreshToken,
-    replaced_by_id: UUID | None = None,
 ) -> bool:
     now = datetime.now(UTC)
-    values = {"revoked_at": now}
-
-    if replaced_by_id is not None:
-        values["replaced_by_id"] = replaced_by_id
-
     result = await session.execute(
         update(RefreshToken)
         .where(
             RefreshToken.id == refresh_token.id,
             RefreshToken.revoked_at.is_(None),
         )
-        .values(**values)
+        .values(revoked_at=now)
         .returning(RefreshToken.id)
     )
     if result.scalar_one_or_none() is None:
         return False
 
     refresh_token.revoked_at = now
-    if replaced_by_id is not None:
-        refresh_token.replaced_by_id = replaced_by_id
-
     return True
 
 
 async def get_active_session_token(
     session: AsyncSession,
-    user_id: UUID,
-    family_id: UUID,
+    session_id: UUID,
 ) -> RefreshToken | None:
-    now = datetime.now(UTC)
-    refresh_token = await session.scalar(
-        select(RefreshToken).where(
-            RefreshToken.user_id == user_id,
-            RefreshToken.family_id == family_id,
-            RefreshToken.revoked_at.is_(None),
-            RefreshToken.expires_at > now,
-        )
-    )
+    refresh_token = await session.get(RefreshToken, session_id)
     if refresh_token is None or not is_refresh_token_active(refresh_token):
         return None
     return refresh_token
 
 
-async def create_auth_response(
-    session: AsyncSession,
-    user: User,
-    family_id: UUID | None = None,
-) -> AuthResponse:
-    session_id = family_id or uuid4()
-    refresh_token = await issue_refresh_token(session, user, family_id=session_id)
+async def create_auth_response(session: AsyncSession, user: User) -> AuthResponse:
+    refresh_token = await issue_refresh_token(session, user)
     await session.commit()
+    session_id, _ = parse_refresh_token(refresh_token)
     return AuthResponse(
-        access_token=create_access_token(
-            user.id,
-            user.email,
-            user.email_verified,
-            session_id,
-        ),
+        access_token=create_access_token(user.id, user.email, user.email_verified, session_id),
         refresh_token=refresh_token,
         expires_in=settings.jwt_expires_minutes * 60,
         user=UserResponse.model_validate(user),
@@ -398,7 +278,7 @@ async def get_current_user(
     user = await session.get(User, claims.sub)
     if user is None:
         raise unauthorized
-    if await get_active_session_token(session, user.id, claims.sid) is None:
+    if await get_active_session_token(session, claims.sid) is None:
         raise unauthorized
     return user
 
@@ -494,57 +374,31 @@ async def refresh(
     payload: RefreshRequest,
     session: SessionDependency,
 ) -> AuthResponse:
-    refresh_token, user = await get_refresh_token_for_user(
-        session,
-        payload.refresh_token,
-    )
+    refresh_token, user = await get_valid_refresh_token(session, payload.refresh_token)
 
-    if refresh_token.revoked_at is not None:
-        return await reject_refresh_token_reuse(session, refresh_token, user)
+    rotated = await issue_refresh_token(session, user)
 
-    if not is_refresh_token_active(refresh_token):
+    if not await revoke_refresh_token(session, refresh_token):
+        rotated_id, _ = parse_refresh_token(rotated)
+        if (
+            unused := await session.get(
+                RefreshToken,
+                rotated_id,
+                populate_existing=True,
+            )
+        ) is not None:
+            await revoke_refresh_token(session, unused)
+        await session.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
         )
 
-    rotated = await issue_refresh_token(
-        session,
-        user,
-        family_id=refresh_token.family_id,
-    )
-
-    rotated_id, _ = parse_refresh_token(rotated)
-
-    if not await revoke_refresh_token(
-        session,
-        refresh_token,
-        replaced_by_id=rotated_id,
-    ):
-        unused_id, _ = parse_refresh_token(rotated)
-        if (
-            unused := await session.get(
-                RefreshToken,
-                unused_id,
-                populate_existing=True,
-            )
-        ) is not None:
-            await revoke_refresh_token(session, unused)
-
-        await session.commit()
-        await session.refresh(refresh_token)
-
-        return await reject_refresh_token_reuse(session, refresh_token, user)
-
     await session.commit()
 
+    rotated_id, _ = parse_refresh_token(rotated)
     return AuthResponse(
-        access_token=create_access_token(
-            user.id,
-            user.email,
-            user.email_verified,
-            refresh_token.family_id,
-        ),
+        access_token=create_access_token(user.id, user.email, user.email_verified, rotated_id),
         refresh_token=rotated,
         expires_in=settings.jwt_expires_minutes * 60,
         user=UserResponse.model_validate(user),

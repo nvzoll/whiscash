@@ -86,7 +86,7 @@ Settings load from environment variables or a `.env` file.
 | `GET` | `/auth/me` | Bearer access token |
 | `PATCH` | `/auth/me` | Bearer access token |
 
-Signup and login return `access_token`, `refresh_token`, `expires_in`, and `user`. Send the access token as `Authorization: Bearer <token>`. Refresh rotates the refresh token. Logout revokes that session so its access token is rejected immediately.
+Signup and login return `access_token`, `refresh_token`, `expires_in`, and `user`. Send the access token as `Authorization: Bearer <token>`. Refresh rotates the refresh token and issues a new access token; the previous access token is invalidated. Logout revokes the refresh token, which also invalidates its access token immediately.
 
 Passwords must be at least 8 characters and at most 72 UTF-8 bytes. Emails are stored lowercased.
 
