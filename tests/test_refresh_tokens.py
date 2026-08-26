@@ -7,22 +7,35 @@ from fastapi import HTTPException
 
 from main import (
     build_refresh_token_value,
+    derive_refresh_token_secret,
     get_valid_refresh_token,
     hash_refresh_token_secret,
     is_refresh_token_active,
+    is_within_reuse_grace,
     issue_refresh_token,
     parse_refresh_token,
+    reject_refresh_token_reuse,
     revoke_refresh_token,
     verify_refresh_token_secret,
 )
 from models import RefreshToken, User
 from refresh_token_purge import purge_expired_refresh_tokens
+from settings import settings
 from tests.mock_db import MockSessionFactory, MockStore
 
 
 def test_hash_refresh_token_secret_is_deterministic() -> None:
     assert hash_refresh_token_secret("secret") == hash_refresh_token_secret("secret")
     assert hash_refresh_token_secret("secret") != hash_refresh_token_secret("other")
+
+
+def test_derive_refresh_token_secret_is_keyed_to_id() -> None:
+    token_id = uuid4()
+    other_id = uuid4()
+    secret = derive_refresh_token_secret(token_id)
+    assert secret == derive_refresh_token_secret(token_id)
+    assert secret != derive_refresh_token_secret(other_id)
+    assert not verify_refresh_token_secret(secret, hash_refresh_token_secret("secret"))
 
 
 def test_parse_refresh_token_round_trip() -> None:
@@ -83,6 +96,15 @@ def test_is_refresh_token_active() -> None:
     assert not is_refresh_token_active(expired, now)
 
 
+def test_is_within_reuse_grace() -> None:
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    grace = timedelta(seconds=settings.jwt_refresh_reuse_grace_seconds)
+
+    assert is_within_reuse_grace(now, now)
+    assert is_within_reuse_grace(now - grace, now)
+    assert not is_within_reuse_grace(now - grace - timedelta(seconds=1), now)
+
+
 async def test_issue_and_validate_refresh_token(
     session_factory: MockSessionFactory,
     seeded_user: User,
@@ -98,6 +120,26 @@ async def test_issue_and_validate_refresh_token(
 
         assert refresh_token.user_id == user.id
         assert user.email == "user@example.com"
+
+
+async def test_issue_refresh_token_does_not_persist_secret(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        token = await issue_refresh_token(session, user)
+        await session.commit()
+        token_id, secret = parse_refresh_token(token)
+        stored = await session.get(RefreshToken, token_id)
+        assert stored is not None
+        assert stored.token_hash != secret
+        assert stored.token_hash != token
+        assert stored.replaced_by_id is None
+        for value in stored.__dict__.values():
+            assert value != token
+            assert value != secret
 
 
 async def test_refresh_token_reuse_revokes_family(
@@ -117,11 +159,20 @@ async def test_refresh_token_reuse_revokes_family(
             user,
             family_id=refresh_token.family_id,
         )
+        rotated_id, _ = parse_refresh_token(rotated)
+        refresh_token.replaced_by_id = rotated_id
+        refresh_token.revoked_at = datetime.now(UTC) - timedelta(
+            seconds=settings.jwt_refresh_reuse_grace_seconds + 1
+        )
         await session.commit()
 
     async with session_factory() as session:
+        stored = await session.get(RefreshToken, refresh_token.id)
+        assert stored is not None
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
         with pytest.raises(HTTPException) as error:
-            await get_valid_refresh_token(session, original)
+            await reject_refresh_token_reuse(session, stored, user)
         assert error.value.status_code == 401
 
         with pytest.raises(HTTPException) as rotated_error:
@@ -129,6 +180,43 @@ async def test_refresh_token_reuse_revokes_family(
         assert rotated_error.value.status_code == 401
 
         surviving, _ = await get_valid_refresh_token(session, other_session)
+        assert is_refresh_token_active(surviving)
+
+
+async def test_refresh_token_reuse_within_grace_returns_current_pair(
+    session_factory: MockSessionFactory,
+    seeded_user: User,
+) -> None:
+    async with session_factory() as session:
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        original = await issue_refresh_token(session, user)
+        await session.commit()
+        refresh_token, _ = await get_valid_refresh_token(session, original)
+        rotated = await issue_refresh_token(
+            session,
+            user,
+            family_id=refresh_token.family_id,
+        )
+        assert await revoke_refresh_token(
+            session,
+            refresh_token,
+            replaced_by_id=parse_refresh_token(rotated)[0],
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        stored = await session.get(RefreshToken, refresh_token.id)
+        assert stored is not None
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
+        assert stored.replaced_by_id == parse_refresh_token(rotated)[0]
+        assert rotated not in stored.__dict__.values()
+        _, rotated_secret = parse_refresh_token(rotated)
+        assert rotated_secret not in stored.__dict__.values()
+        replayed = await reject_refresh_token_reuse(session, stored, user)
+        assert replayed.refresh_token == rotated
+        surviving, _ = await get_valid_refresh_token(session, rotated)
         assert is_refresh_token_active(surviving)
 
 
@@ -347,6 +435,11 @@ async def test_purge_keeps_revoked_unexpired_for_reuse_detection(
             user,
             family_id=refresh_token.family_id,
         )
+        rotated_id, _ = parse_refresh_token(rotated)
+        refresh_token.replaced_by_id = rotated_id
+        refresh_token.revoked_at = datetime.now(UTC) - timedelta(
+            seconds=settings.jwt_refresh_reuse_grace_seconds + 1
+        )
         await session.commit()
 
     async with session_factory() as session:
@@ -355,8 +448,12 @@ async def test_purge_keeps_revoked_unexpired_for_reuse_detection(
         assert deleted == 0
 
     async with session_factory() as session:
+        stored = await session.get(RefreshToken, refresh_token.id)
+        assert stored is not None
+        user = await session.get(User, seeded_user.id)
+        assert user is not None
         with pytest.raises(HTTPException) as error:
-            await get_valid_refresh_token(session, original)
+            await reject_refresh_token_reuse(session, stored, user)
         assert error.value.status_code == 401
 
         with pytest.raises(HTTPException) as rotated_error:

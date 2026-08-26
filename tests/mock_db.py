@@ -54,9 +54,16 @@ class MockSession:
         await self.flush()
 
     async def refresh(self, instance: Any) -> None:
-        if isinstance(instance, User) and instance.id in self._store.users:
-            stored = self._store.users[instance.id]
-            instance.created_at = stored.created_at
+        stored: object | None = None
+        if isinstance(instance, User):
+            stored = self._store.users.get(instance.id)
+        elif isinstance(instance, RefreshToken):
+            stored = self._store.refresh_tokens.get(instance.id)
+        if stored is None or stored is instance:
+            return
+        for key, value in stored.__dict__.items():
+            if not key.startswith("_"):
+                setattr(instance, key, value)
 
     async def rollback(self) -> None:
         self._new.clear()

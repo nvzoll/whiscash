@@ -68,6 +68,13 @@ class RefreshToken(Base):
         nullable=True,
         default=None,
     )
+    replaced_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("refresh_token.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
