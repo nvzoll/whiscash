@@ -2,7 +2,7 @@
 
 Revision ID: 001_initial
 Revises:
-Create Date: 2026-08-24 00:00:00.000000
+Create Date: 2026-08-27 00:00:00.000000
 
 """
 
@@ -45,9 +45,11 @@ def upgrade() -> None:
         "refresh_token",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("family_id", sa.Uuid(), nullable=False),
         sa.Column("token_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("replaced_by_id", sa.Uuid(), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -60,6 +62,12 @@ def upgrade() -> None:
             name=op.f("refresh_token_user_id_fkey"),
             ondelete="CASCADE",
         ),
+        sa.ForeignKeyConstraint(
+            ["replaced_by_id"],
+            ["refresh_token.id"],
+            name=op.f("refresh_token_replaced_by_id_fkey"),
+            ondelete="SET NULL",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("refresh_token_pkey")),
     )
     op.create_index(
@@ -68,9 +76,30 @@ def upgrade() -> None:
         ["user_id"],
         unique=False,
     )
+    op.create_index(
+        op.f("refresh_token_family_id_idx"),
+        "refresh_token",
+        ["family_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("refresh_token_expires_at_idx"),
+        "refresh_token",
+        ["expires_at"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("refresh_token_replaced_by_id_idx"),
+        "refresh_token",
+        ["replaced_by_id"],
+        unique=False,
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(op.f("refresh_token_replaced_by_id_idx"), table_name="refresh_token")
+    op.drop_index(op.f("refresh_token_expires_at_idx"), table_name="refresh_token")
+    op.drop_index(op.f("refresh_token_family_id_idx"), table_name="refresh_token")
     op.drop_index(op.f("refresh_token_user_id_idx"), table_name="refresh_token")
     op.drop_table("refresh_token")
     op.drop_index(op.f("user_email_idx"), table_name="user")
