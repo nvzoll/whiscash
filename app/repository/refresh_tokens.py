@@ -84,7 +84,7 @@ class SqlRefreshTokenRepo:
                 RefreshToken.revoked_at.is_(None),
                 RefreshToken.expires_at > now,
             )
-            .order_by(RefreshToken.created_at.desc())
+            .order_by(RefreshToken.created_at.desc(), RefreshToken.id.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()

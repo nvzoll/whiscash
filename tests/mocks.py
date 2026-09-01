@@ -59,6 +59,8 @@ class MockRefreshTokenRepo:
     async def add(self, refresh_token: RefreshToken) -> None:
         if refresh_token.family_id is None:
             refresh_token.family_id = uuid4()
+        if refresh_token.created_at is None:
+            refresh_token.created_at = datetime.now(UTC)
         self._store.refresh_tokens[refresh_token.id] = refresh_token
 
     async def revoke(self, refresh_token: RefreshToken) -> bool:
@@ -81,16 +83,22 @@ class MockRefreshTokenRepo:
             ):
                 token.revoked_at = now
 
-    async def get_active_by_family(self, family_id: UUID) -> RefreshToken | None:
+    async def get_active_by_family(
+        self,
+        *,
+        user_id: UUID,
+        family_id: UUID,
+    ) -> RefreshToken | None:
         active = [
             token
             for token in self._store.refresh_tokens.values()
-            if token.family_id == family_id
+            if token.user_id == user_id
+            and token.family_id == family_id
             and RefreshTokenService.is_active(token)
         ]
         if not active:
             return None
-        return max(active, key=lambda token: token.created_at)
+        return max(active, key=lambda token: (token.created_at, token.id))
 
     def seed_session(self, user: User) -> UUID:
         token_id = uuid4()
@@ -100,6 +108,7 @@ class MockRefreshTokenRepo:
             family_id=uuid4(),
             token_hash="test-token-hash",
             expires_at=datetime.now(UTC) + timedelta(days=30),
+            created_at=datetime.now(UTC),
         )
         self._store.refresh_tokens[token_id] = refresh_token
         return token_id

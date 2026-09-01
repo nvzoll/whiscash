@@ -191,6 +191,7 @@ class AuthService:
                 family_id=session_family_id,
                 token_hash=RefreshTokenService.hash_secret(secret),
                 expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expires_days),
+                created_at=datetime.now(UTC),
             )
         )
         return token_id, RefreshTokenService.build(token_id, secret)

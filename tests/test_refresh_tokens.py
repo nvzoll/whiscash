@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -262,3 +262,35 @@ async def test_expired_refresh_token_does_not_revoke_family(
         await service.refresh(expired_token)
 
     assert mock_store.refresh_tokens[sibling_id].revoked_at is None
+
+
+async def test_get_active_by_family_breaks_created_at_ties_by_id(
+    mock_store: MockStore,
+    seeded_user: User,
+) -> None:
+    family_id = uuid4()
+    created_at = datetime.now(UTC)
+    lower_id = UUID("00000000-0000-4000-8000-000000000001")
+    higher_id = UUID("00000000-0000-4000-8000-000000000002")
+    mock_store.refresh_tokens[lower_id] = RefreshToken(
+        id=lower_id,
+        user_id=seeded_user.id,
+        family_id=family_id,
+        token_hash="lower",
+        expires_at=created_at + timedelta(days=30),
+        created_at=created_at,
+    )
+    mock_store.refresh_tokens[higher_id] = RefreshToken(
+        id=higher_id,
+        user_id=seeded_user.id,
+        family_id=family_id,
+        token_hash="higher",
+        expires_at=created_at + timedelta(days=30),
+        created_at=created_at,
+    )
+
+    repo = MockRefreshTokenRepo(mock_store)
+    active = await repo.get_active_by_family(user_id=seeded_user.id, family_id=family_id)
+
+    assert active is not None
+    assert active.id == higher_id
