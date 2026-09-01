@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from app.db.models import RefreshToken, User
 from app.repository.users import DuplicateEmailError
+from app.service.refresh_token import RefreshTokenService
 
 
 @dataclass
@@ -56,6 +57,8 @@ class MockRefreshTokenRepo:
         return self._store.refresh_tokens.get(token_id)
 
     async def add(self, refresh_token: RefreshToken) -> None:
+        if refresh_token.family_id is None:
+            refresh_token.family_id = uuid4()
         self._store.refresh_tokens[refresh_token.id] = refresh_token
 
     async def revoke(self, refresh_token: RefreshToken) -> bool:
@@ -68,11 +71,33 @@ class MockRefreshTokenRepo:
             refresh_token.revoked_at = now
             return True
 
+    async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
+        now = datetime.now(UTC)
+        for token in self._store.refresh_tokens.values():
+            if (
+                token.user_id == user_id
+                and token.family_id == family_id
+                and token.revoked_at is None
+            ):
+                token.revoked_at = now
+
+    async def get_active_by_family(self, family_id: UUID) -> RefreshToken | None:
+        active = [
+            token
+            for token in self._store.refresh_tokens.values()
+            if token.family_id == family_id
+            and RefreshTokenService.is_active(token)
+        ]
+        if not active:
+            return None
+        return max(active, key=lambda token: token.created_at)
+
     def seed_session(self, user: User) -> UUID:
         token_id = uuid4()
         refresh_token = RefreshToken(
             id=token_id,
             user_id=user.id,
+            family_id=uuid4(),
             token_hash="test-token-hash",
             expires_at=datetime.now(UTC) + timedelta(days=30),
         )

@@ -3,7 +3,7 @@ from typing import Annotated, Self
 from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RefreshToken
@@ -56,3 +56,29 @@ class SqlRefreshTokenRepo:
         refresh_token.revoked_at = now
 
         return True
+
+    async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
+        now = datetime.now(UTC)
+        await self._session.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.family_id == family_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+
+    async def get_active_by_family(self, family_id: UUID) -> RefreshToken | None:
+        now = datetime.now(UTC)
+        result = await self._session.execute(
+            select(RefreshToken)
+            .where(
+                RefreshToken.family_id == family_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .order_by(RefreshToken.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

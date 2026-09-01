@@ -9,6 +9,7 @@ CREATE_REFRESH_TOKEN_TABLE = text(
     CREATE TABLE refresh_token (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
+        family_id TEXT NOT NULL,
         token_hash TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         revoked_at TEXT,

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
 from hmac import new as hmac_new
@@ -43,15 +43,17 @@ class RefreshTokenService:
         return compare_digest(RefreshTokenService.hash_secret(secret), token_hash)
 
     @staticmethod
-    def is_active(
-        refresh_token: RefreshToken,
-        now: datetime | None = None,
-    ) -> bool:
+    def is_active(refresh_token: RefreshToken) -> bool:
         if refresh_token.revoked_at is not None:
             return False
 
-        if (expires_at := refresh_token.expires_at).tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
+        return refresh_token.expires_at > datetime.now(UTC)
 
-        current_time = now or datetime.now(UTC)
-        return expires_at > current_time
+    @staticmethod
+    def is_within_reuse_grace(revoked_at: datetime | None) -> bool:
+        if revoked_at is None:
+            return False
+
+        elapsed = datetime.now(UTC) - revoked_at
+
+        return elapsed <= timedelta(seconds=settings.jwt_refresh_reuse_grace_seconds)

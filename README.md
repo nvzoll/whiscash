@@ -74,6 +74,7 @@ Settings load from environment variables or a `.env` file.
 | `JWT_ALGORITHM` | `HS256` |
 | `JWT_EXPIRES_MINUTES` | `60` |
 | `JWT_REFRESH_EXPIRES_DAYS` | `30` |
+| `JWT_REFRESH_REUSE_GRACE_SECONDS` | `2` |
 
 
 ## API

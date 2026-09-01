@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     jwt_expires_minutes: int = Field(default=60, gt=0)
     jwt_refresh_expires_days: int = Field(default=30, gt=0)
+    jwt_refresh_reuse_grace_seconds: int = Field(default=2, ge=0)
 
     password_limits: Limits = Limits(min=8, max=72)
 

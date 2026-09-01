@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -7,10 +8,18 @@ from fastapi.security import HTTPAuthorizationCredentials
 from httpx import AsyncClient, Response
 
 from app.controller.deps import get_current_user
+from app.core.config import settings
 from app.db.models import User
 from app.service.access_token import AccessTokenService
 from app.service.password import PasswordService
 from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
+
+
+def expire_refresh_reuse_grace(mock_store: MockStore) -> None:
+    past = datetime.now(UTC) - timedelta(seconds=settings.jwt_refresh_reuse_grace_seconds + 1)
+    for token in mock_store.refresh_tokens.values():
+        if token.revoked_at is not None:
+            token.revoked_at = past
 
 
 def auth_service(store: MockStore):
@@ -104,13 +113,82 @@ async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
         "/auth/refresh",
         json={"refresh_token": original_refresh_token},
     )
-    assert reused_response.status_code == 401
+    assert reused_response.status_code == 200
+    assert reused_response.json()["refresh_token"] == new_refresh_token
 
     follow_up_response = await client.post(
         "/auth/refresh",
         json={"refresh_token": new_refresh_token},
     )
     assert follow_up_response.status_code == 200
+
+
+async def test_refresh_reuse_after_grace_revokes_family(
+    client: AsyncClient,
+    mock_store: MockStore,
+) -> None:
+    login_response = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    assert login_response.status_code == 200
+    original_refresh_token = login_response.json()["refresh_token"]
+
+    refresh_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": original_refresh_token},
+    )
+    assert refresh_response.status_code == 200
+    new_refresh_token = refresh_response.json()["refresh_token"]
+
+    expire_refresh_reuse_grace(mock_store)
+
+    reused_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": original_refresh_token},
+    )
+    assert reused_response.status_code == 401
+
+    successor_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": new_refresh_token},
+    )
+    assert successor_response.status_code == 401
+
+
+async def test_refresh_reuse_does_not_revoke_other_sessions(
+    client: AsyncClient,
+) -> None:
+    first_login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    second_login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    assert first_login.status_code == 200
+    assert second_login.status_code == 200
+    first_refresh_token = first_login.json()["refresh_token"]
+    second_refresh_token = second_login.json()["refresh_token"]
+
+    rotated_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": first_refresh_token},
+    )
+    assert rotated_response.status_code == 200
+
+    reused_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": first_refresh_token},
+    )
+    assert reused_response.status_code == 200
+
+    other_session_response = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": second_refresh_token},
+    )
+    assert other_session_response.status_code == 200
 
 
 async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> None:
@@ -126,7 +204,7 @@ async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> 
         client.post("/auth/refresh", json={"refresh_token": original_refresh_token}),
     )
     statuses = sorted([first_response.status_code, second_response.status_code])
-    assert statuses == [200, 401]
+    assert statuses == [200, 200]
     winner = first_response if first_response.status_code == 200 else second_response
     rotated = winner.json()["refresh_token"]
     assert rotated != original_refresh_token
@@ -135,7 +213,8 @@ async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> 
         "/auth/refresh",
         json={"refresh_token": original_refresh_token},
     )
-    assert reused_response.status_code == 401
+    assert reused_response.status_code == 200
+    assert reused_response.json()["refresh_token"] == rotated
 
     follow_up_response = await client.post(
         "/auth/refresh",

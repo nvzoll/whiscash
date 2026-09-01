@@ -45,6 +45,7 @@ def upgrade() -> None:
         "refresh_token",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("family_id", sa.Uuid(), nullable=False),
         sa.Column("token_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
@@ -74,9 +75,16 @@ def upgrade() -> None:
         ["expires_at"],
         unique=False,
     )
+    op.create_index(
+        op.f("refresh_token_family_id_idx"),
+        "refresh_token",
+        ["family_id"],
+        unique=False,
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(op.f("refresh_token_family_id_idx"), table_name="refresh_token")
     op.drop_index(op.f("refresh_token_expires_at_idx"), table_name="refresh_token")
     op.drop_index(op.f("refresh_token_user_id_idx"), table_name="refresh_token")
     op.drop_table("refresh_token")

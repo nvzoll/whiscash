@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 _INSERT_TOKEN = text(
     """
-    INSERT INTO refresh_token (id, user_id, token_hash, expires_at, revoked_at, created_at)
-    VALUES (:id, :user_id, :token_hash, :expires_at, :revoked_at, :created_at)
+    INSERT INTO refresh_token (id, user_id, family_id, token_hash, expires_at, revoked_at, created_at)
+    VALUES (:id, :user_id, :family_id, :token_hash, :expires_at, :revoked_at, :created_at)
     """
 )
 
@@ -20,11 +20,13 @@ async def _insert_token(
     revoked_at: datetime | None = None,
 ) -> str:
     token_id = str(uuid4())
+    family_id = str(uuid4())
     await session.execute(
         _INSERT_TOKEN,
         {
             "id": token_id,
             "user_id": str(uuid4()),
+            "family_id": family_id,
             "token_hash": "hash",
             "expires_at": expires_at,
             "revoked_at": revoked_at,
