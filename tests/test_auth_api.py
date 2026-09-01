@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.models import User
 from app.service.access_token import AccessTokenService
 from app.service.password import PasswordService
+from app.service.service import _DUMMY_HASH
 from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
 
 
@@ -41,7 +42,7 @@ async def create_session_access_token(
     )
 
 
-async def test_login_unknown_email_hashes_random_dummy(
+async def test_login_unknown_email_verifies_against_dummy_hash(
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -68,9 +69,8 @@ async def test_login_unknown_email_hashes_random_dummy(
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid email or password"
-    assert len(hashed_secrets) == 1
-    assert hashed_secrets[0] != "correct-horse"
-    assert verified == []
+    assert hashed_secrets == []
+    assert verified == [("correct-horse", _DUMMY_HASH)]
 
 
 async def test_login_wrong_password_is_rejected(client: AsyncClient) -> None:
