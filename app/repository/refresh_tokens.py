@@ -15,18 +15,10 @@ class SqlRefreshTokenRepo:
         self._session = session
 
     @classmethod
-    async def new(
-        cls: type[Self],
-        session: SessionDependency,
-    ) -> RefreshTokenRepo:
+    async def new(cls: type[Self], session: SessionDependency) -> RefreshTokenRepo:
         return cls(session)
 
-    async def get_by_id(
-        self,
-        token_id: UUID,
-        *,
-        for_update: bool = False,
-    ) -> RefreshToken | None:
+    async def get_by_id(self, token_id: UUID, *, for_update: bool = False) -> RefreshToken | None:
         return await self._session.get(
             RefreshToken,
             token_id,

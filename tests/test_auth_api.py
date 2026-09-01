@@ -510,8 +510,7 @@ async def test_patch_me_rejects_empty_update(
     )
     assert response.status_code == 422
     assert any(
-        error["type"] == "value_error"
-        and "at least one of display_name or photo_url is required" in error["msg"]
+        error["type"] == "value_error" and "at least one of display_name or photo_url is required" in error["msg"]
         for error in response.json()["detail"]
     )
 

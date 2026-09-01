@@ -86,11 +86,7 @@ class MockRefreshTokenRepo:
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
         now = datetime.now(UTC)
         for token in self._store.refresh_tokens.values():
-            if (
-                token.user_id == user_id
-                and token.family_id == family_id
-                and token.revoked_at is None
-            ):
+            if token.user_id == user_id and token.family_id == family_id and token.revoked_at is None:
                 token.revoked_at = now
 
     def seed_session(self, user: User) -> UUID:

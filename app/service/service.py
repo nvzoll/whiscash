@@ -105,7 +105,7 @@ class AuthService:
         await self._refresh_tokens.revoke(
             old_token,
             replaced_by=rotated_id,
-            replacement_secret=RefreshTokenService.encrypt_replacement_secret(rotated_secret),
+            replacement_secret=RefreshTokenService.enc_replacement_secret(rotated_secret),
         )
 
         return AuthTokens(
@@ -121,8 +121,8 @@ class AuthService:
         )
 
     async def logout(self, token_str: str) -> None:
-        refresh_token = await self._load_refresh_token(token_str, for_update=True)
-        if RefreshTokenService.is_active(refresh_token) and not await self._refresh_tokens.revoke(refresh_token):
+        rt = await self._load_refresh_token(token_str, for_update=True)
+        if RefreshTokenService.is_active(rt) and not await self._refresh_tokens.revoke(rt):
             raise InvalidRefreshTokenError
 
     async def authenticate_access_token(self, token: str) -> User:
@@ -156,6 +156,7 @@ class AuthService:
 
     async def _issue_tokens(self, user: User) -> AuthTokens:
         session_id, secret = await self._issue_refresh_token(user)
+
         return AuthTokens(
             access_token=AccessTokenService.create(
                 user.id,
@@ -177,6 +178,7 @@ class AuthService:
         token_id = uuid4()
         secret = RefreshTokenService.generate_secret()
         session_family_id = family_id or uuid4()
+
         await self._refresh_tokens.add(
             RefreshToken(
                 id=token_id,
@@ -187,6 +189,7 @@ class AuthService:
                 created_at=datetime.now(UTC),
             )
         )
+
         return token_id, secret
 
     async def _load_refresh_token(
@@ -201,35 +204,27 @@ class AuthService:
             raise InvalidRefreshTokenError from error
 
         if (
-            refresh_token := await self._refresh_tokens.get_by_id(
+            rt := await self._refresh_tokens.get_by_id(
                 token_id,
                 for_update=for_update,
             )
-        ) is None:
+        ) is None or not RefreshTokenService.verify_secret(secret, rt.token_hash):
             raise InvalidRefreshTokenError
 
-        if not RefreshTokenService.verify_secret(secret, refresh_token.token_hash):
-            raise InvalidRefreshTokenError
-
-        return refresh_token
+        return rt
 
     async def _try_reuse_family(
         self,
-        refresh_token: RefreshToken,
+        rt: RefreshToken,
         user: User,
     ) -> AuthTokens:
         if (
-            RefreshTokenService.is_within_reuse_grace(refresh_token.revoked_at)
-            and refresh_token.replaced_by is not None
-            and refresh_token.replacement_secret is not None
-            and (successor := await self._refresh_tokens.get_by_id(refresh_token.replaced_by)) is not None
+            RefreshTokenService.is_within_reuse_grace(rt.revoked_at)
+            and rt.replaced_by is not None
+            and rt.replacement_secret is not None
+            and (successor := await self._refresh_tokens.get_by_id(rt.replaced_by)) is not None
             and RefreshTokenService.is_active(successor)
-            and (
-                replacement_secret := RefreshTokenService.decrypt_replacement_secret(
-                    refresh_token.replacement_secret
-                )
-            )
-            is not None
+            and (secret := RefreshTokenService.dec_replacement_secret(rt.replacement_secret)) is not None
         ):
             return AuthTokens(
                 access_token=AccessTokenService.create(
@@ -238,19 +233,19 @@ class AuthService:
                     user.email_verified,
                     successor.id,
                 ),
-                refresh_token=RefreshTokenService.build(successor.id, replacement_secret),
+                refresh_token=RefreshTokenService.build(successor.id, secret),
                 expires_in=settings.jwt_expires_minutes * 60,
                 user=user,
             )
         else:
             await self._refresh_tokens.revoke_family(
-                user_id=refresh_token.user_id,
-                family_id=refresh_token.family_id,
+                user_id=rt.user_id,
+                family_id=rt.family_id,
             )
             raise InvalidRefreshTokenError
 
     async def _has_active_session(self, session_id: UUID) -> bool:
-        if (refresh_token := await self._refresh_tokens.get_by_id(session_id)) is None:
+        if (rt := await self._refresh_tokens.get_by_id(session_id)) is None:
             return False
 
-        return RefreshTokenService.is_active(refresh_token)
+        return RefreshTokenService.is_active(rt)

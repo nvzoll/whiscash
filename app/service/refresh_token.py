@@ -22,11 +22,11 @@ class RefreshTokenService:
         return secrets.token_urlsafe(32)
 
     @staticmethod
-    def encrypt_replacement_secret(secret: str) -> str:
+    def enc_replacement_secret(secret: str) -> str:
         return _fernet.encrypt(secret.encode("utf-8")).decode("utf-8")
 
     @staticmethod
-    def decrypt_replacement_secret(token: str) -> str | None:
+    def dec_replacement_secret(token: str) -> str | None:
         try:
             return _fernet.decrypt(token.encode("utf-8")).decode("utf-8")
         except InvalidToken:
@@ -54,11 +54,11 @@ class RefreshTokenService:
         return compare_digest(RefreshTokenService.hash_secret(secret), token_hash)
 
     @staticmethod
-    def is_active(refresh_token: RefreshToken) -> bool:
-        if refresh_token.revoked_at is not None:
+    def is_active(rt: RefreshToken) -> bool:
+        if rt.revoked_at is not None:
             return False
 
-        return refresh_token.expires_at > datetime.now(UTC)
+        return rt.expires_at > datetime.now(UTC)
 
     @staticmethod
     def is_within_reuse_grace(revoked_at: datetime | None) -> bool:
