@@ -1,13 +1,12 @@
 from datetime import UTC, datetime
-from typing import Annotated, Self
+from typing import Self
 from uuid import UUID
 
-from fastapi import Depends
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RefreshToken
-from app.db.session import get_session
+from app.db.session import SessionDependency
 from app.repository.protocols import RefreshTokenRepo
 
 
@@ -18,7 +17,7 @@ class SqlRefreshTokenRepo:
     @classmethod
     async def new(
         cls: type[Self],
-        session: Annotated[AsyncSession, Depends(get_session)],
+        session: SessionDependency,
     ) -> RefreshTokenRepo:
         return cls(session)
 

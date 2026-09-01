@@ -1,13 +1,12 @@
-from typing import Annotated, Self
+from typing import Self
 from uuid import UUID
 
-from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
-from app.db.session import get_session
+from app.db.session import SessionDependency
 from app.repository.protocols import UserRepo
 
 
@@ -21,7 +20,7 @@ class SqlUserRepo:
     @classmethod
     async def new(
         cls: type[Self],
-        session: Annotated[AsyncSession, Depends(get_session)],
+        session: SessionDependency,
     ) -> UserRepo:
         return cls(session)
 
