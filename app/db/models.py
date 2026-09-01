@@ -71,7 +71,7 @@ class RefreshToken(CreatedAtMixin, Base):
         default=None,
     )
     replacement_secret: Mapped[str | None] = mapped_column(
-        String(64),
+        String(256),
         nullable=True,
         default=None,
     )

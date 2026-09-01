@@ -4,8 +4,12 @@ from hashlib import sha256
 from hmac import compare_digest
 from uuid import UUID
 
+from cryptography.fernet import Fernet, InvalidToken
+
 from app.core.config import settings
 from app.db.models import RefreshToken
+
+_fernet = Fernet(settings.refresh_token_key)
 
 
 class RefreshTokenService:
@@ -16,6 +20,17 @@ class RefreshTokenService:
     @staticmethod
     def generate_secret() -> str:
         return secrets.token_urlsafe(32)
+
+    @staticmethod
+    def encrypt_replacement_secret(secret: str) -> str:
+        return _fernet.encrypt(secret.encode("utf-8")).decode("utf-8")
+
+    @staticmethod
+    def decrypt_replacement_secret(token: str) -> str | None:
+        try:
+            return _fernet.decrypt(token.encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            return None
 
     @staticmethod
     def build(token_id: UUID, secret: str) -> str:

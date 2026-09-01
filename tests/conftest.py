@@ -4,6 +4,7 @@ import os
 from collections.abc import AsyncIterator
 
 os.environ.setdefault("JWT_SECRET", "unit-test-secret-change-me-32-bytes")
+os.environ.setdefault("REFRESH_TOKEN_KEY", "PEeqpiAF7QRc9En7kJBm1VpRUX4UCCiOroUIBvn6GhU=")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://auth:auth@localhost:5432/auth")
 
 import pytest

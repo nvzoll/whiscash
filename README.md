@@ -12,11 +12,16 @@ FastAPI + Postgres.
 
 ## Quick start
 
-Put `JWT_SECRET` in a gitignored `.secrets.json` in the project root.
+Do `mise run gen-secrets` to generate random `JWT_SECRET` and `REFRESH_TOKEN_KEY`
+in a gitignored `.secrets.json` in the project root.
+
 `mise run` loads that file into the task environment.
+
+You can also encrypt that file with `sops` and mise will [decrypt](https://mise.jdx.dev/environments/secrets/sops.html) it on every `mise run`.
 
 ```sh
 uv sync --group dev
+mise run gen-secrets
 mise run start
 ```
 
@@ -33,6 +38,7 @@ OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 | `mise run create-db` | Create the `auth` database |
 | `mise run migrate` | `uv run alembic upgrade head` against localhost |
 | `mise uvr` | `uv run` with env variables loaded |
+| `mise run gen-secrets` | Generate .secrets.json |
 
 Reset schema:
 
@@ -71,6 +77,7 @@ Settings load from environment variables or a `.env` file.
 | --- | --- |
 | `DATABASE_URL` | `postgresql+asyncpg://auth:auth@localhost:5432/auth` |
 | `JWT_SECRET` | required; no default |
+| `REFRESH_TOKEN_KEY` | required; no default |
 | `JWT_ALGORITHM` | `HS256` |
 | `JWT_EXPIRES_MINUTES` | `60` |
 | `JWT_REFRESH_EXPIRES_DAYS` | `30` |

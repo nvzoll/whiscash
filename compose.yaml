@@ -6,6 +6,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://auth:auth@postgres:5432/auth
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY:?REFRESH_TOKEN_KEY must be set}
       JWT_EXPIRES_MINUTES: "60"
       JWT_REFRESH_EXPIRES_DAYS: "30"
     depends_on:

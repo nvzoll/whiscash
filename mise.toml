@@ -2,6 +2,10 @@
 _.file = { path = ".secrets.json", redact = true }
 database_url = "postgresql+asyncpg://auth:auth@localhost:5432/auth"
 
+[tasks.gen-secrets]
+description = "Generate JWT and refresh token secrets"
+run = "uv run scripts/generate_secrets.py"
+
 [tasks.start]
 description = "Start docker compose"
 run = "docker compose up --build -d --wait"

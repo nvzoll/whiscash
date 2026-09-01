@@ -105,7 +105,7 @@ class AuthService:
         if not await self._refresh_tokens.revoke(
             old_token,
             replaced_by=rotated_id,
-            replacement_secret=rotated_secret,
+            replacement_secret=RefreshTokenService.encrypt_replacement_secret(rotated_secret),
         ):
             if (orphan := await self._refresh_tokens.get_by_id(rotated_id)) is not None:
                 await self._refresh_tokens.revoke(orphan)
@@ -236,6 +236,12 @@ class AuthService:
             and refresh_token.replacement_secret is not None
             and (successor := await self._refresh_tokens.get_by_id(refresh_token.replaced_by)) is not None
             and RefreshTokenService.is_active(successor)
+            and (
+                replacement_secret := RefreshTokenService.decrypt_replacement_secret(
+                    refresh_token.replacement_secret
+                )
+            )
+            is not None
         ):
             return AuthTokens(
                 access_token=AccessTokenService.create(
@@ -244,7 +250,7 @@ class AuthService:
                     user.email_verified,
                     successor.id,
                 ),
-                refresh_token=RefreshTokenService.build(successor.id, refresh_token.replacement_secret),
+                refresh_token=RefreshTokenService.build(successor.id, replacement_secret),
                 expires_in=settings.jwt_expires_minutes * 60,
                 user=user,
             )

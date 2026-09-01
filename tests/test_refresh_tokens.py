@@ -211,6 +211,30 @@ async def test_refresh_token_reuse_revokes_family(
     assert mock_store.refresh_tokens[rotated_id].revoked_at is not None
 
 
+async def test_reuse_with_corrupted_replacement_secret_revokes_family(
+    mock_store: MockStore,
+    seeded_user: User,
+) -> None:
+    service = AuthService(MockUserRepo(mock_store), MockRefreshTokenRepo(mock_store))
+    tokens = await service.login("user@example.com", "correct-horse")
+    original_id, _ = RefreshTokenService.parse(tokens.refresh_token)
+
+    rotated = await service.refresh(tokens.refresh_token)
+    rotated_id, _ = RefreshTokenService.parse(rotated.refresh_token)
+
+    original = mock_store.refresh_tokens[original_id]
+    assert original.replacement_secret is not None
+    last_char = original.replacement_secret[-1]
+    flipped = "A" if last_char != "A" else "B"
+    original.replacement_secret = original.replacement_secret[:-1] + flipped
+
+    with pytest.raises(InvalidRefreshTokenError):
+        await service.refresh(tokens.refresh_token)
+
+    assert mock_store.refresh_tokens[original_id].revoked_at is not None
+    assert mock_store.refresh_tokens[rotated_id].revoked_at is not None
+
+
 async def test_invalid_refresh_secret_does_not_revoke_family(
     mock_store: MockStore,
     seeded_user: User,
