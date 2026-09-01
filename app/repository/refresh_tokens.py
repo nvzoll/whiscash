@@ -69,11 +69,17 @@ class SqlRefreshTokenRepo:
             .values(revoked_at=now)
         )
 
-    async def get_active_by_family(self, family_id: UUID) -> RefreshToken | None:
+    async def get_active_by_family(
+        self,
+        *,
+        user_id: UUID,
+        family_id: UUID,
+    ) -> RefreshToken | None:
         now = datetime.now(UTC)
         result = await self._session.execute(
             select(RefreshToken)
             .where(
+                RefreshToken.user_id == user_id,
                 RefreshToken.family_id == family_id,
                 RefreshToken.revoked_at.is_(None),
                 RefreshToken.expires_at > now,

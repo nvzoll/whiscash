@@ -240,7 +240,12 @@ class AuthService:
     ) -> AuthTokens:
         if (
             RefreshTokenService.is_within_reuse_grace(refresh_token.revoked_at)
-            and (successor := await self._refresh_tokens.get_active_by_family(refresh_token.family_id)) is not None
+            and (
+                successor := await self._refresh_tokens.get_active_by_family(
+                    user_id=refresh_token.user_id,
+                    family_id=refresh_token.family_id,
+                )
+            ) is not None
         ):
             secret = RefreshTokenService.derive_secret(successor.id)
             return AuthTokens(
