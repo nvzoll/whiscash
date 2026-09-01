@@ -1,3 +1,7 @@
+from typing import Annotated, Self
+
+from fastapi import Depends
+
 from app.controller.exceptions import to_http
 from app.controller.validations import (
     AuthResponse,
@@ -15,6 +19,13 @@ from app.service.service import AuthService, AuthTokens
 class AuthController:
     def __init__(self, service: AuthService) -> None:
         self._service = service
+
+    @classmethod
+    async def new(
+        cls,
+        service: Annotated[AuthService, Depends(AuthService.new)],
+    ) -> Self:
+        return cls(service)
 
     async def signup(self, payload: SignupRequest) -> AuthResponse:
         try:
@@ -59,6 +70,7 @@ class AuthController:
             )
         except DomainError as error:
             raise to_http(error) from error
+
         return UserResponse.model_validate(updated)
 
     @staticmethod

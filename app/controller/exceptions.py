@@ -1,4 +1,5 @@
 from fastapi import HTTPException, status
+from frozendict import frozendict
 
 from app.service.exceptions import (
     DomainError,
@@ -77,19 +78,19 @@ class PermissionDeniedHTTP(BaseHTTPException):
     default_detail = "Permission denied"
 
 
+_DOMAIN_HTTP_MAP = frozendict(
+    {
+        UserAlreadyExistsError: UserAlreadyExistsHTTP,
+        InvalidCredentialsError: InvalidCredentialsHTTP,
+        InvalidAccessTokenError: InvalidAccessTokenHTTP,
+        InvalidRefreshTokenError: InvalidRefreshTokenHTTP,
+        TokenExpiredError: TokenExpiredHTTP,
+        UserNotFoundError: UserNotFoundHTTP,
+        PermissionDeniedError: PermissionDeniedHTTP,
+    }
+)
+
+
 def to_http(error: DomainError) -> HTTPException:
-    if isinstance(error, UserAlreadyExistsError):
-        return UserAlreadyExistsHTTP()
-    if isinstance(error, InvalidCredentialsError):
-        return InvalidCredentialsHTTP()
-    if isinstance(error, InvalidAccessTokenError):
-        return InvalidAccessTokenHTTP()
-    if isinstance(error, InvalidRefreshTokenError):
-        return InvalidRefreshTokenHTTP()
-    if isinstance(error, TokenExpiredError):
-        return TokenExpiredHTTP()
-    if isinstance(error, UserNotFoundError):
-        return UserNotFoundHTTP()
-    if isinstance(error, PermissionDeniedError):
-        return PermissionDeniedHTTP()
-    return BaseHTTPException()
+    http_type = _DOMAIN_HTTP_MAP.get(type(error), BaseHTTPException)
+    return http_type()

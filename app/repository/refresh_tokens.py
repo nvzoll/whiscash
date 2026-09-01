@@ -1,15 +1,26 @@
 from datetime import UTC, datetime
+from typing import Annotated, Self
 from uuid import UUID
 
+from fastapi import Depends
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RefreshToken
+from app.db.session import get_session
+from app.repository.protocols import RefreshTokenRepo
 
 
 class SqlRefreshTokenRepo:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self: Self, session: AsyncSession) -> None:
         self._session = session
+
+    @classmethod
+    async def new(
+        cls: type[Self],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> RefreshTokenRepo:
+        return cls(session)
 
     async def get_by_id(
         self,
@@ -41,5 +52,7 @@ class SqlRefreshTokenRepo:
         )
         if result.scalar_one_or_none() is None:
             return False
+
         refresh_token.revoked_at = now
+
         return True

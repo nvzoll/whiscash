@@ -10,15 +10,15 @@ from app.repository.users import DuplicateEmailError
 
 
 @dataclass
-class FakeStore:
+class MockStore:
     users: dict[UUID, User] = field(default_factory=dict)
     emails: dict[str, UUID] = field(default_factory=dict)
     refresh_tokens: dict[UUID, RefreshToken] = field(default_factory=dict)
     revoke_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
-class FakeUserRepo:
-    def __init__(self, store: FakeStore) -> None:
+class MockUserRepo:
+    def __init__(self, store: MockStore) -> None:
         self._store = store
 
     async def get_by_id(self, user_id: UUID) -> User | None:
@@ -43,8 +43,8 @@ class FakeUserRepo:
         self._store.users[user.id] = user
 
 
-class FakeRefreshTokenRepo:
-    def __init__(self, store: FakeStore) -> None:
+class MockRefreshTokenRepo:
+    def __init__(self, store: MockStore) -> None:
         self._store = store
 
     async def get_by_id(

@@ -1,18 +1,29 @@
+from typing import Annotated, Self
 from uuid import UUID
 
+from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import User
+from app.db.session import get_session
+from app.repository.protocols import UserRepo
 
 
 class DuplicateEmailError(Exception): ...
 
 
 class SqlUserRepo:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self: Self, session: AsyncSession) -> None:
         self._session = session
+
+    @classmethod
+    async def new(
+        cls: type[Self],
+        session: Annotated[AsyncSession, Depends(get_session)],
+    ) -> UserRepo:
+        return cls(session)
 
     async def get_by_id(self, user_id: UUID) -> User | None:
         return await self._session.get(User, user_id)

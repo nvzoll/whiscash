@@ -10,20 +10,20 @@ from app.controller.deps import get_current_user
 from app.db.models import User
 from app.service.access_token import create_access_token
 from app.service.password import hash_password, verify_password
-from tests.fakes import FakeRefreshTokenRepo, FakeStore, FakeUserRepo
+from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
 
 
-def auth_service(store: FakeStore):
+def auth_service(store: MockStore):
     from app.service.service import AuthService
 
-    return AuthService(FakeUserRepo(store), FakeRefreshTokenRepo(store))
+    return AuthService(MockUserRepo(store), MockRefreshTokenRepo(store))
 
 
 async def create_session_access_token(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     user: User,
 ) -> str:
-    session_id = FakeRefreshTokenRepo(fake_store).seed_session(user)
+    session_id = MockRefreshTokenRepo(mock_store).seed_session(user)
     return create_access_token(
         user.id,
         user.email,
@@ -408,10 +408,10 @@ async def test_get_me_rejects_access_token_for_unknown_session(
 
 async def test_patch_me_updates_profile(
     client: AsyncClient,
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
-    token = await create_session_access_token(fake_store, seeded_user)
+    token = await create_session_access_token(mock_store, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
@@ -446,11 +446,11 @@ async def test_patch_me_updates_profile(
 )
 async def test_patch_me_rejects_empty_update(
     client: AsyncClient,
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
     payload: dict[str, None],
 ) -> None:
-    token = await create_session_access_token(fake_store, seeded_user)
+    token = await create_session_access_token(mock_store, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
@@ -528,39 +528,39 @@ async def test_patch_me_rejects_access_token_for_unknown_user(
 
 
 async def test_get_current_user_rejects_missing_credentials(
-    fake_store: FakeStore,
+    mock_store: MockStore,
 ) -> None:
-    service = auth_service(fake_store)
+    service = auth_service(mock_store)
     with pytest.raises(HTTPException) as error:
         await get_current_user(None, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_non_bearer_scheme(
-    fake_store: FakeStore,
+    mock_store: MockStore,
 ) -> None:
     credentials = HTTPAuthorizationCredentials(scheme="Basic", credentials="abc")
-    service = auth_service(fake_store)
+    service = auth_service(mock_store)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_invalid_token(
-    fake_store: FakeStore,
+    mock_store: MockStore,
 ) -> None:
     credentials = HTTPAuthorizationCredentials(
         scheme="Bearer",
         credentials="not-a-token",
     )
-    service = auth_service(fake_store)
+    service = auth_service(mock_store)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_unknown_user(
-    fake_store: FakeStore,
+    mock_store: MockStore,
 ) -> None:
     token = create_access_token(
         uuid4(),
@@ -569,14 +569,14 @@ async def test_get_current_user_rejects_unknown_user(
         session_id=uuid4(),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = auth_service(fake_store)
+    service = auth_service(mock_store)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_unknown_session(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
     token = create_access_token(
@@ -586,19 +586,19 @@ async def test_get_current_user_rejects_unknown_session(
         uuid4(),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = auth_service(fake_store)
+    service = auth_service(mock_store)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_returns_matching_user(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
-    token = await create_session_access_token(fake_store, seeded_user)
+    token = await create_session_access_token(mock_store, seeded_user)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = auth_service(fake_store)
+    service = auth_service(mock_store)
     user = await get_current_user(credentials, service)
     assert user.id == seeded_user.id
     assert user.email == seeded_user.email

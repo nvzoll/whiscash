@@ -15,7 +15,7 @@ from app.service.refresh_token import (
     verify_refresh_token_secret,
 )
 from app.service.service import AuthService
-from tests.fakes import FakeRefreshTokenRepo, FakeStore, FakeUserRepo
+from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
 
 
 def test_hash_refresh_token_secret_is_deterministic() -> None:
@@ -91,10 +91,10 @@ def test_is_refresh_token_active() -> None:
 
 
 async def test_issue_and_validate_refresh_token(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
-    service = AuthService(FakeUserRepo(fake_store), FakeRefreshTokenRepo(fake_store))
+    service = AuthService(MockUserRepo(mock_store), MockRefreshTokenRepo(mock_store))
     tokens = await service.login("user@example.com", "correct-horse")
 
     resolved = await service._resolve_refresh_token(tokens.refresh_token, for_update=False)
@@ -104,13 +104,13 @@ async def test_issue_and_validate_refresh_token(
 
 
 async def test_issue_refresh_token_does_not_persist_secret(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
-    service = AuthService(FakeUserRepo(fake_store), FakeRefreshTokenRepo(fake_store))
+    service = AuthService(MockUserRepo(mock_store), MockRefreshTokenRepo(mock_store))
     tokens = await service.login("user@example.com", "correct-horse")
     token_id, secret = parse_refresh_token(tokens.refresh_token)
-    stored = fake_store.refresh_tokens[token_id]
+    stored = mock_store.refresh_tokens[token_id]
     assert stored.token_hash != secret
     assert stored.token_hash != tokens.refresh_token
     for value in stored.__dict__.values():
@@ -119,11 +119,11 @@ async def test_issue_refresh_token_does_not_persist_secret(
 
 
 async def test_revoke_refresh_token_claims_only_once(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
-    refresh_tokens = FakeRefreshTokenRepo(fake_store)
-    service = AuthService(FakeUserRepo(fake_store), refresh_tokens)
+    refresh_tokens = MockRefreshTokenRepo(mock_store)
+    service = AuthService(MockUserRepo(mock_store), refresh_tokens)
     tokens = await service.login("user@example.com", "correct-horse")
 
     async def claim() -> bool:
@@ -144,7 +144,7 @@ async def test_revoke_refresh_token_claims_only_once(
 
 
 async def test_expired_refresh_token_is_rejected(
-    fake_store: FakeStore,
+    mock_store: MockStore,
     seeded_user: User,
 ) -> None:
     secret = "refresh-secret"
@@ -153,9 +153,9 @@ async def test_expired_refresh_token_is_rejected(
         token_hash=hash_refresh_token_secret(secret),
         expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
-    fake_store.refresh_tokens[refresh_token.id] = refresh_token
+    mock_store.refresh_tokens[refresh_token.id] = refresh_token
     token = build_refresh_token_value(refresh_token.id, secret)
 
-    service = AuthService(FakeUserRepo(fake_store), FakeRefreshTokenRepo(fake_store))
+    service = AuthService(MockUserRepo(mock_store), MockRefreshTokenRepo(mock_store))
     with pytest.raises(InvalidRefreshTokenError):
         await service.refresh(token)

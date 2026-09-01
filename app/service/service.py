@@ -2,12 +2,16 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
+from typing import Annotated, Self
 from uuid import UUID, uuid4
+
+from fastapi import Depends
 
 from app.core.config import settings
 from app.db.models import RefreshToken, User
 from app.repository.protocols import RefreshTokenRepo, UserRepo
-from app.repository.users import DuplicateEmailError
+from app.repository.refresh_tokens import SqlRefreshTokenRepo
+from app.repository.users import DuplicateEmailError, SqlUserRepo
 from app.service.access_token import create_access_token, decode_access_token
 from app.service.exceptions import (
     InvalidAccessTokenError,
@@ -43,6 +47,14 @@ class AuthService:
         self._users = users
         self._refresh_tokens = refresh_tokens
 
+    @classmethod
+    async def new(
+        cls,
+        users: Annotated[UserRepo, Depends(SqlUserRepo.new)],
+        refresh_tokens: Annotated[RefreshTokenRepo, Depends(SqlRefreshTokenRepo.new)],
+    ) -> Self:
+        return cls(users, refresh_tokens)
+
     async def signup(
         self,
         email: str,
@@ -56,10 +68,12 @@ class AuthService:
             display_name=display_name,
             email_verified=False,
         )
+
         try:
             await self._users.add(user)
         except DuplicateEmailError as error:
             raise UserAlreadyExistsError from error
+
         return await self._issue_tokens(user)
 
     async def login(self, email: str, password: str) -> AuthTokens:
@@ -81,6 +95,7 @@ class AuthService:
     async def refresh(self, refresh_token: str) -> AuthTokens:
         old_token, user = await self._resolve_refresh_token(refresh_token, for_update=True)
         session_id, rotated = await self._issue_refresh_token(user)
+
         if not await self._refresh_tokens.revoke(old_token):
             raise InvalidRefreshTokenError
 
@@ -106,11 +121,13 @@ class AuthService:
             claims = decode_access_token(token)
         except ValueError as error:
             raise InvalidAccessTokenError from error
-        user = await self._users.get_by_id(claims.sub)
-        if user is None:
+
+        if (user := await self._users.get_by_id(claims.sub)) is None:
             raise InvalidAccessTokenError
+
         if not await self._has_active_session(claims.sid):
             raise InvalidAccessTokenError
+
         return user
 
     async def update_profile(
@@ -123,7 +140,9 @@ class AuthService:
             user.display_name = display_name
         if photo_url is not None:
             user.photo_url = photo_url
+
         await self._users.save(user)
+
         return user
 
     async def _issue_tokens(self, user: User) -> AuthTokens:
@@ -164,24 +183,28 @@ class AuthService:
         except ValueError as error:
             raise InvalidRefreshTokenError from error
 
-        refresh_token = await self._refresh_tokens.get_by_id(
-            token_id,
-            for_update=for_update,
-        )
-        if refresh_token is None:
+        if (
+            refresh_token := await self._refresh_tokens.get_by_id(
+                token_id,
+                for_update=for_update,
+            )
+        ) is None:
             raise InvalidRefreshTokenError
+
         if not verify_refresh_token_secret(secret, refresh_token.token_hash):
             raise InvalidRefreshTokenError
 
-        user = await self._users.get_by_id(refresh_token.user_id)
-        if user is None:
+        if (user := await self._users.get_by_id(refresh_token.user_id)) is None:
             raise InvalidRefreshTokenError
+
         if not is_refresh_token_active(refresh_token):
             raise InvalidRefreshTokenError
+
         return refresh_token, user
 
     async def _has_active_session(self, session_id: UUID) -> bool:
         refresh_token = await self._refresh_tokens.get_by_id(session_id)
         if refresh_token is None:
             return False
+
         return is_refresh_token_active(refresh_token)
