@@ -1,11 +1,21 @@
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID
 
 import jwt
-from pydantic import ValidationError
+from pydantic import BaseModel, EmailStr, ValidationError
 
-from schemas import TokenClaims
-from settings import settings
+from app.core.config import settings
+
+
+class TokenClaims(BaseModel):
+    sub: UUID
+    email: EmailStr
+    email_verified: bool
+    typ: Literal["access"]
+    sid: UUID
+    iat: int
+    exp: int
 
 
 def create_access_token(

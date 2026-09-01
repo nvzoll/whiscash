@@ -3,21 +3,19 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
-from auth.refresh_token import (
+from app.db.models import RefreshToken, User
+from app.service.exceptions import InvalidRefreshTokenError
+from app.service.refresh_token import (
     build_refresh_token_value,
     derive_refresh_token_secret,
-    get_valid_refresh_token,
     hash_refresh_token_secret,
     is_refresh_token_active,
-    issue_refresh_token,
     parse_refresh_token,
-    revoke_refresh_token,
     verify_refresh_token_secret,
 )
-from models import RefreshToken, User
-from tests.mock_db import MockSessionFactory
+from app.service.service import AuthService
+from tests.fakes import FakeRefreshTokenRepo, FakeStore, FakeUserRepo
 
 
 def test_hash_refresh_token_secret_is_deterministic() -> None:
@@ -93,88 +91,71 @@ def test_is_refresh_token_active() -> None:
 
 
 async def test_issue_and_validate_refresh_token(
-    session_factory: MockSessionFactory,
+    fake_store: FakeStore,
     seeded_user: User,
 ) -> None:
-    async with session_factory() as session:
-        user = await session.get(User, seeded_user.id)
-        assert user is not None
-        _, token = await issue_refresh_token(session, user)
-        await session.commit()
+    service = AuthService(FakeUserRepo(fake_store), FakeRefreshTokenRepo(fake_store))
+    tokens = await service.login("user@example.com", "correct-horse")
 
-    async with session_factory() as session:
-        refresh_token, user = await get_valid_refresh_token(session, token)
-
-        assert refresh_token.user_id == user.id
-        assert user.email == "user@example.com"
+    resolved = await service._resolve_refresh_token(tokens.refresh_token, for_update=False)
+    refresh_token, user = resolved
+    assert refresh_token.user_id == user.id
+    assert user.email == "user@example.com"
 
 
 async def test_issue_refresh_token_does_not_persist_secret(
-    session_factory: MockSessionFactory,
+    fake_store: FakeStore,
     seeded_user: User,
 ) -> None:
-    async with session_factory() as session:
-        user = await session.get(User, seeded_user.id)
-        assert user is not None
-        token_id, token = await issue_refresh_token(session, user)
-        await session.commit()
-        _, secret = parse_refresh_token(token)
-        stored = await session.get(RefreshToken, token_id)
-        assert stored is not None
-        assert stored.token_hash != secret
-        assert stored.token_hash != token
-        for value in stored.__dict__.values():
-            assert value != token
-            assert value != secret
+    service = AuthService(FakeUserRepo(fake_store), FakeRefreshTokenRepo(fake_store))
+    tokens = await service.login("user@example.com", "correct-horse")
+    token_id, secret = parse_refresh_token(tokens.refresh_token)
+    stored = fake_store.refresh_tokens[token_id]
+    assert stored.token_hash != secret
+    assert stored.token_hash != tokens.refresh_token
+    for value in stored.__dict__.values():
+        assert value != tokens.refresh_token
+        assert value != secret
 
 
 async def test_revoke_refresh_token_claims_only_once(
-    session_factory: MockSessionFactory,
+    fake_store: FakeStore,
     seeded_user: User,
 ) -> None:
-    async with session_factory() as session:
-        user = await session.get(User, seeded_user.id)
-        assert user is not None
-        _, token = await issue_refresh_token(session, user)
-        await session.commit()
+    refresh_tokens = FakeRefreshTokenRepo(fake_store)
+    service = AuthService(FakeUserRepo(fake_store), refresh_tokens)
+    tokens = await service.login("user@example.com", "correct-horse")
 
     async def claim() -> bool:
-        async with session_factory() as session:
-            refresh_token, _ = await get_valid_refresh_token(session, token)
-            claimed = await revoke_refresh_token(session, refresh_token)
-            await session.commit()
-            return claimed
+        try:
+            refresh_token, _ = await service._resolve_refresh_token(
+                tokens.refresh_token,
+                for_update=True,
+            )
+        except InvalidRefreshTokenError:
+            return False
+        return await refresh_tokens.revoke(refresh_token)
 
     results = await asyncio.gather(claim(), claim(), return_exceptions=True)
     successes = [result for result in results if result is True]
-    failures = [
-        result
-        for result in results
-        if result is False
-        or (isinstance(result, HTTPException) and result.status_code == 401)
-    ]
+    failures = [result for result in results if result is False]
     assert len(successes) == 1
     assert len(failures) == 1
 
 
 async def test_expired_refresh_token_is_rejected(
-    session_factory: MockSessionFactory,
+    fake_store: FakeStore,
     seeded_user: User,
 ) -> None:
-    async with session_factory() as session:
-        user = await session.get(User, seeded_user.id)
-        assert user is not None
-        secret = "refresh-secret"
-        refresh_token = RefreshToken(
-            user_id=user.id,
-            token_hash=hash_refresh_token_secret(secret),
-            expires_at=datetime.now(UTC) - timedelta(seconds=1),
-        )
-        session.add(refresh_token)
-        await session.commit()
-        token = build_refresh_token_value(refresh_token.id, secret)
+    secret = "refresh-secret"
+    refresh_token = RefreshToken(
+        user_id=seeded_user.id,
+        token_hash=hash_refresh_token_secret(secret),
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    fake_store.refresh_tokens[refresh_token.id] = refresh_token
+    token = build_refresh_token_value(refresh_token.id, secret)
 
-    async with session_factory() as session:
-        with pytest.raises(HTTPException) as error:
-            await get_valid_refresh_token(session, token)
-        assert error.value.status_code == 401
+    service = AuthService(FakeUserRepo(fake_store), FakeRefreshTokenRepo(fake_store))
+    with pytest.raises(InvalidRefreshTokenError):
+        await service.refresh(token)

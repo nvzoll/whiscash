@@ -9,9 +9,10 @@ from sqlalchemy import (
     String,
     Uuid,
     false,
-    func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from app.db.created_at import CreatedAtMixin
 
 NAMING_CONVENTION = {
     "ix": "%(column_0_label)s_idx",
@@ -26,7 +27,7 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-class User(Base):
+class User(CreatedAtMixin, Base):
     __tablename__ = "user"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -40,14 +41,9 @@ class User(Base):
         default=False,
         server_default=false(),
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
 
 
-class RefreshToken(Base):
+class RefreshToken(CreatedAtMixin, Base):
     __tablename__ = "refresh_token"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
@@ -66,9 +62,4 @@ class RefreshToken(Base):
         DateTime(timezone=True),
         nullable=True,
         default=None,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
     )

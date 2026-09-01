@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal, Self
+from typing import Any, Self
 from uuid import UUID
 
 from pydantic import (
@@ -108,13 +108,3 @@ class AuthResponse(BaseModel):
 
 class RefreshRequest(RequestModel):
     refresh_token: str = Field(min_length=1)
-
-
-class TokenClaims(BaseModel):
-    sub: UUID
-    email: EmailStr
-    email_verified: bool
-    typ: Literal["access"]
-    sid: UUID
-    iat: int
-    exp: int

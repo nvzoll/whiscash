@@ -60,7 +60,7 @@ Start Postgres only, migrate, then run uvicorn:
 ```sh
 docker compose up -d --wait postgres
 uv run alembic upgrade head
-uv run uvicorn main:app --reload
+uv run uvicorn app.core.main:app --reload
 ```
 
 ## Configuration
@@ -94,7 +94,7 @@ Passwords must be at least 8 characters and at most 72 UTF-8 bytes. Emails are s
 
 ## Schema
 
-ORM models in `models.py` are the source of truth. The initial Alembic revision snapshots `user` and `refresh_token`.
+ORM models in `app/db/models.py` are the source of truth. The initial Alembic revision snapshots `user` and `refresh_token`.
 
 After changing models:
 

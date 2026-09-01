@@ -9,47 +9,42 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://auth:auth@localhost:
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from auth.password import hash_password
-from db import get_session
-from main import app
-from models import User
-from tests.mock_db import MockSessionFactory, MockStore, override_get_session
+from app.controller.deps import get_refresh_token_repo, get_user_repo
+from app.core.main import app
+from app.db.models import User
+from app.service.password import hash_password
+from tests.fakes import FakeRefreshTokenRepo, FakeStore, FakeUserRepo
 
 
 @pytest.fixture
-def mock_store() -> MockStore:
-    return MockStore()
+def fake_store() -> FakeStore:
+    return FakeStore()
 
 
 @pytest.fixture
-def session_factory(mock_store: MockStore) -> MockSessionFactory:
-    return MockSessionFactory(mock_store)
-
-
-@pytest.fixture
-async def seeded_user(session_factory: MockSessionFactory) -> User:
-    async with session_factory() as session:
-        user = User(
-            email="user@example.com",
-            password_hash=hash_password("correct-horse"),
-            email_verified=True,
-        )
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-        return user
+async def seeded_user(fake_store: FakeStore) -> User:
+    user = User(
+        email="user@example.com",
+        password_hash=hash_password("correct-horse"),
+        email_verified=True,
+    )
+    await FakeUserRepo(fake_store).add(user)
+    return user
 
 
 @pytest.fixture
 async def client(
-    mock_store: MockStore,
+    fake_store: FakeStore,
     seeded_user: User,
 ) -> AsyncIterator[AsyncClient]:
-    async def get_session_override() -> AsyncIterator:
-        async for session in override_get_session(mock_store):
-            yield session
+    def get_user_repo_override() -> FakeUserRepo:
+        return FakeUserRepo(fake_store)
 
-    app.dependency_overrides[get_session] = get_session_override
+    def get_refresh_token_repo_override() -> FakeRefreshTokenRepo:
+        return FakeRefreshTokenRepo(fake_store)
+
+    app.dependency_overrides[get_user_repo] = get_user_repo_override
+    app.dependency_overrides[get_refresh_token_repo] = get_refresh_token_repo_override
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client

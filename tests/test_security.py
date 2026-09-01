@@ -4,9 +4,9 @@ from uuid import uuid4
 import jwt
 import pytest
 
-from auth.access_token import create_access_token, decode_access_token
-from auth.password import hash_password, verify_password
-from settings import settings
+from app.core.config import settings
+from app.service.access_token import create_access_token, decode_access_token
+from app.service.password import hash_password, verify_password
 
 
 def test_password_hash_and_verify() -> None:
