@@ -12,23 +12,28 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.config import settings
+
 
 def normalize_email(value: str) -> str:
     return value.strip().lower()
 
 
 def validate_password(value: str) -> str:
-    if len(value) < 8:
-        raise ValueError("password must contain at least 8 characters")
-    if len(value.encode("utf-8")) > 72:
-        raise ValueError("password must not exceed 72 UTF-8 bytes")
+    pmin, pmax = settings.password_limits
+
+    if len(value) < pmin:
+        raise ValueError(f"password must contain at least {pmin} characters")
+    if len(value.encode("utf-8")) > pmax:
+        raise ValueError(f"password must not exceed {pmax} UTF-8 bytes")
+
     return value
 
 
 def normalize_display_name(value: str) -> str:
-    normalized = value.strip()
-    if not normalized:
+    if not (normalized := value.strip()):
         raise ValueError("display_name must not be blank")
+
     return normalized
 
 

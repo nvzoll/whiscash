@@ -1,7 +1,12 @@
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Limits(NamedTuple):
+    min: int
+    max: int
 
 
 class Settings(BaseSettings):
@@ -12,6 +17,8 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256"] = "HS256"
     jwt_expires_minutes: int = Field(default=60, gt=0)
     jwt_refresh_expires_days: int = Field(default=30, gt=0)
+
+    password_limits: Limits = Limits(min=8, max=72)
 
 
 settings = Settings()
