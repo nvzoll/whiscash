@@ -72,7 +72,8 @@ class AuthService:
 
     async def login(self, email: str, password: str) -> AuthTokens:
         if (user := await self._users.get_by_email(email)) is None:
-            dummy = token_urlsafe(random.randint(*settings.password_limits))
+            pmin, pmax = settings.password_limits
+            dummy = token_urlsafe(random.randint(pmin, pmax - 1))
             await asyncio.to_thread(PasswordService.hash, dummy)
             raise InvalidCredentialsError
 
