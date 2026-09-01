@@ -13,7 +13,7 @@ from app.core.main import app
 from app.db.models import User
 from app.repository.refresh_tokens import SqlRefreshTokenRepo
 from app.repository.users import SqlUserRepo
-from app.service.password import hash_password
+from app.service.password import PasswordService
 from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
 
 
@@ -26,7 +26,7 @@ def mock_store() -> MockStore:
 async def seeded_user(mock_store: MockStore) -> User:
     user = User(
         email="user@example.com",
-        password_hash=hash_password("correct-horse"),
+        password_hash=PasswordService.hash("correct-horse"),
         email_verified=True,
     )
     await MockUserRepo(mock_store).add(user)

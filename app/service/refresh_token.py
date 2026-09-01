@@ -8,48 +8,50 @@ from app.core.config import settings
 from app.db.models import RefreshToken
 
 
-def hash_refresh_token_secret(secret: str) -> str:
-    return sha256(secret.encode("utf-8")).hexdigest()
+class RefreshTokenService:
+    @staticmethod
+    def hash_secret(secret: str) -> str:
+        return sha256(secret.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def derive_secret(token_id: UUID) -> str:
+        return hmac_new(
+            settings.jwt_secret.encode("utf-8"),
+            token_id.bytes,
+            sha256,
+        ).hexdigest()
 
-def derive_refresh_token_secret(token_id: UUID) -> str:
-    return hmac_new(
-        settings.jwt_secret.encode("utf-8"),
-        token_id.bytes,
-        sha256,
-    ).hexdigest()
+    @staticmethod
+    def build(token_id: UUID, secret: str) -> str:
+        return f"{token_id}.{secret}"
 
+    @staticmethod
+    def parse(token: str) -> tuple[UUID, str]:
+        parts = token.split(".", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1]:
+            raise ValueError("invalid refresh token")
 
-def build_refresh_token_value(token_id: UUID, secret: str) -> str:
-    return f"{token_id}.{secret}"
+        try:
+            token_id = UUID(parts[0])
+        except ValueError as error:
+            raise ValueError("invalid refresh token") from error
 
+        return token_id, parts[1]
 
-def parse_refresh_token(token: str) -> tuple[UUID, str]:
-    parts = token.split(".", 1)
-    if len(parts) != 2 or not parts[0] or not parts[1]:
-        raise ValueError("invalid refresh token")
+    @staticmethod
+    def verify_secret(secret: str, token_hash: str) -> bool:
+        return compare_digest(RefreshTokenService.hash_secret(secret), token_hash)
 
-    try:
-        token_id = UUID(parts[0])
-    except ValueError as error:
-        raise ValueError("invalid refresh token") from error
+    @staticmethod
+    def is_active(
+        refresh_token: RefreshToken,
+        now: datetime | None = None,
+    ) -> bool:
+        if refresh_token.revoked_at is not None:
+            return False
 
-    return token_id, parts[1]
+        if (expires_at := refresh_token.expires_at).tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
 
-
-def verify_refresh_token_secret(secret: str, token_hash: str) -> bool:
-    return compare_digest(hash_refresh_token_secret(secret), token_hash)
-
-
-def is_refresh_token_active(
-    refresh_token: RefreshToken,
-    now: datetime | None = None,
-) -> bool:
-    if refresh_token.revoked_at is not None:
-        return False
-
-    if (expires_at := refresh_token.expires_at).tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-
-    current_time = now or datetime.now(UTC)
-    return expires_at > current_time
+        current_time = now or datetime.now(UTC)
+        return expires_at > current_time

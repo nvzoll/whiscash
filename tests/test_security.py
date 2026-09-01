@@ -5,23 +5,23 @@ import jwt
 import pytest
 
 from app.core.config import settings
-from app.service.access_token import create_access_token, decode_access_token
-from app.service.password import hash_password, verify_password
+from app.service.access_token import AccessTokenService
+from app.service.password import PasswordService
 
 
 def test_password_hash_and_verify() -> None:
-    password_hash = hash_password("correct-horse")
+    password_hash = PasswordService.hash("correct-horse")
 
     assert password_hash != "correct-horse"
-    assert verify_password("correct-horse", password_hash)
-    assert not verify_password("wrong-password", password_hash)
-    assert not verify_password("correct-horse", "not-a-bcrypt-hash")
+    assert PasswordService.verify("correct-horse", password_hash)
+    assert not PasswordService.verify("wrong-password", password_hash)
+    assert not PasswordService.verify("correct-horse", "not-a-bcrypt-hash")
 
 
 def test_access_token_round_trip() -> None:
     user_id = uuid4()
     session_id = uuid4()
-    token = create_access_token(
+    token = AccessTokenService.create(
         user_id,
         "user@example.com",
         email_verified=True,
@@ -29,7 +29,7 @@ def test_access_token_round_trip() -> None:
         expires_minutes=5,
     )
 
-    claims = decode_access_token(token)
+    claims = AccessTokenService.decode(token)
 
     assert claims.sub == user_id
     assert str(claims.email) == "user@example.com"
@@ -40,7 +40,7 @@ def test_access_token_round_trip() -> None:
 
 
 def test_expired_access_token_is_rejected() -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         uuid4(),
         "user@example.com",
         email_verified=False,
@@ -49,12 +49,12 @@ def test_expired_access_token_is_rejected() -> None:
     )
 
     with pytest.raises(ValueError, match="invalid or expired access token"):
-        decode_access_token(token)
+        AccessTokenService.decode(token)
 
 
 def test_invalid_access_token_is_rejected() -> None:
     with pytest.raises(ValueError, match="invalid or expired access token"):
-        decode_access_token("not-a-token")
+        AccessTokenService.decode("not-a-token")
 
 
 def _token_payload(**overrides: object) -> dict[str, object]:
@@ -84,7 +84,7 @@ def test_refresh_typ_token_is_rejected_as_access_token() -> None:
     token = _encode_token(typ="refresh")
 
     with pytest.raises(ValueError, match="invalid or expired access token"):
-        decode_access_token(token)
+        AccessTokenService.decode(token)
 
 
 def test_access_token_without_typ_is_rejected() -> None:
@@ -97,7 +97,7 @@ def test_access_token_without_typ_is_rejected() -> None:
     )
 
     with pytest.raises(ValueError, match="invalid or expired access token"):
-        decode_access_token(token)
+        AccessTokenService.decode(token)
 
 
 def test_access_token_without_sid_is_rejected() -> None:
@@ -110,4 +110,4 @@ def test_access_token_without_sid_is_rejected() -> None:
     )
 
     with pytest.raises(ValueError, match="invalid or expired access token"):
-        decode_access_token(token)
+        AccessTokenService.decode(token)

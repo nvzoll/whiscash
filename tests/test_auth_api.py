@@ -8,8 +8,8 @@ from httpx import AsyncClient, Response
 
 from app.controller.deps import get_current_user
 from app.db.models import User
-from app.service.access_token import create_access_token
-from app.service.password import hash_password, verify_password
+from app.service.access_token import AccessTokenService
+from app.service.password import PasswordService
 from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
 
 
@@ -24,7 +24,7 @@ async def create_session_access_token(
     user: User,
 ) -> str:
     session_id = MockRefreshTokenRepo(mock_store).seed_session(user)
-    return create_access_token(
+    return AccessTokenService.create(
         user.id,
         user.email,
         user.email_verified,
@@ -38,8 +38,8 @@ async def test_login_unknown_email_hashes_random_dummy(
 ) -> None:
     hashed_secrets: list[str] = []
     verified: list[tuple[str, str]] = []
-    original_hash = hash_password
-    original_verify = verify_password
+    original_hash = PasswordService.hash
+    original_verify = PasswordService.verify
 
     def tracked_hash(password: str) -> str:
         hashed_secrets.append(password)
@@ -49,8 +49,8 @@ async def test_login_unknown_email_hashes_random_dummy(
         verified.append((password, password_hash))
         return original_verify(password, password_hash)
 
-    monkeypatch.setattr("app.service.service.hash_password", tracked_hash)
-    monkeypatch.setattr("app.service.service.verify_password", tracked_verify)
+    monkeypatch.setattr("app.service.service.PasswordService.hash", tracked_hash)
+    monkeypatch.setattr("app.service.service.PasswordService.verify", tracked_verify)
 
     response = await client.post(
         "/auth/login",
@@ -359,7 +359,7 @@ async def test_get_me_rejects_expired_access_token(
     client: AsyncClient,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         seeded_user.id,
         seeded_user.email,
         seeded_user.email_verified,
@@ -376,7 +376,7 @@ async def test_get_me_rejects_expired_access_token(
 async def test_get_me_rejects_access_token_for_unknown_user(
     client: AsyncClient,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         uuid4(),
         "ghost@example.com",
         email_verified=False,
@@ -393,7 +393,7 @@ async def test_get_me_rejects_access_token_for_unknown_session(
     client: AsyncClient,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         seeded_user.id,
         seeded_user.email,
         seeded_user.email_verified,
@@ -495,7 +495,7 @@ async def test_patch_me_rejects_expired_access_token(
     client: AsyncClient,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         seeded_user.id,
         seeded_user.email,
         seeded_user.email_verified,
@@ -513,7 +513,7 @@ async def test_patch_me_rejects_expired_access_token(
 async def test_patch_me_rejects_access_token_for_unknown_user(
     client: AsyncClient,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         uuid4(),
         "ghost@example.com",
         email_verified=False,
@@ -562,7 +562,7 @@ async def test_get_current_user_rejects_invalid_token(
 async def test_get_current_user_rejects_unknown_user(
     mock_store: MockStore,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         uuid4(),
         "ghost@example.com",
         email_verified=False,
@@ -579,7 +579,7 @@ async def test_get_current_user_rejects_unknown_session(
     mock_store: MockStore,
     seeded_user: User,
 ) -> None:
-    token = create_access_token(
+    token = AccessTokenService.create(
         seeded_user.id,
         seeded_user.email,
         seeded_user.email_verified,

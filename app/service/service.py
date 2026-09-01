@@ -12,22 +12,15 @@ from app.db.models import RefreshToken, User
 from app.repository.protocols import RefreshTokenRepo, UserRepo
 from app.repository.refresh_tokens import SqlRefreshTokenRepo
 from app.repository.users import DuplicateEmailError, SqlUserRepo
-from app.service.access_token import create_access_token, decode_access_token
+from app.service.access_token import AccessTokenService
 from app.service.exceptions import (
     InvalidAccessTokenError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
     UserAlreadyExistsError,
 )
-from app.service.password import hash_password, verify_password
-from app.service.refresh_token import (
-    build_refresh_token_value,
-    derive_refresh_token_secret,
-    hash_refresh_token_secret,
-    is_refresh_token_active,
-    parse_refresh_token,
-    verify_refresh_token_secret,
-)
+from app.service.password import PasswordService
+from app.service.refresh_token import RefreshTokenService
 
 
 @dataclass(frozen=True)
@@ -61,7 +54,7 @@ class AuthService:
         password: str,
         display_name: str | None,
     ) -> AuthTokens:
-        password_hash = await asyncio.to_thread(hash_password, password)
+        password_hash = await asyncio.to_thread(PasswordService.hash, password)
         user = User(
             email=email,
             password_hash=password_hash,
@@ -79,11 +72,11 @@ class AuthService:
     async def login(self, email: str, password: str) -> AuthTokens:
         if (user := await self._users.get_by_email(email)) is None:
             dummy = token_urlsafe(32)
-            await asyncio.to_thread(hash_password, dummy)
+            await asyncio.to_thread(PasswordService.hash, dummy)
             raise InvalidCredentialsError
 
         password_matches = await asyncio.to_thread(
-            verify_password,
+            PasswordService.verify,
             password,
             user.password_hash,
         )
@@ -100,7 +93,7 @@ class AuthService:
             raise InvalidRefreshTokenError
 
         return AuthTokens(
-            access_token=create_access_token(
+            access_token=AccessTokenService.create(
                 user.id,
                 user.email,
                 user.email_verified,
@@ -118,7 +111,7 @@ class AuthService:
 
     async def authenticate_access_token(self, token: str) -> User:
         try:
-            claims = decode_access_token(token)
+            claims = AccessTokenService.decode(token)
         except ValueError as error:
             raise InvalidAccessTokenError from error
 
@@ -148,7 +141,7 @@ class AuthService:
     async def _issue_tokens(self, user: User) -> AuthTokens:
         session_id, refresh_token = await self._issue_refresh_token(user)
         return AuthTokens(
-            access_token=create_access_token(
+            access_token=AccessTokenService.create(
                 user.id,
                 user.email,
                 user.email_verified,
@@ -161,16 +154,16 @@ class AuthService:
 
     async def _issue_refresh_token(self, user: User) -> tuple[UUID, str]:
         token_id = uuid4()
-        secret = derive_refresh_token_secret(token_id)
+        secret = RefreshTokenService.derive_secret(token_id)
         await self._refresh_tokens.add(
             RefreshToken(
                 id=token_id,
                 user_id=user.id,
-                token_hash=hash_refresh_token_secret(secret),
+                token_hash=RefreshTokenService.hash_secret(secret),
                 expires_at=datetime.now(UTC) + timedelta(days=settings.jwt_refresh_expires_days),
             )
         )
-        return token_id, build_refresh_token_value(token_id, secret)
+        return token_id, RefreshTokenService.build(token_id, secret)
 
     async def _resolve_refresh_token(
         self,
@@ -179,7 +172,7 @@ class AuthService:
         for_update: bool,
     ) -> tuple[RefreshToken, User]:
         try:
-            token_id, secret = parse_refresh_token(token)
+            token_id, secret = RefreshTokenService.parse(token)
         except ValueError as error:
             raise InvalidRefreshTokenError from error
 
@@ -191,20 +184,19 @@ class AuthService:
         ) is None:
             raise InvalidRefreshTokenError
 
-        if not verify_refresh_token_secret(secret, refresh_token.token_hash):
+        if not RefreshTokenService.verify_secret(secret, refresh_token.token_hash):
             raise InvalidRefreshTokenError
 
         if (user := await self._users.get_by_id(refresh_token.user_id)) is None:
             raise InvalidRefreshTokenError
 
-        if not is_refresh_token_active(refresh_token):
+        if not RefreshTokenService.is_active(refresh_token):
             raise InvalidRefreshTokenError
 
         return refresh_token, user
 
     async def _has_active_session(self, session_id: UUID) -> bool:
-        refresh_token = await self._refresh_tokens.get_by_id(session_id)
-        if refresh_token is None:
+        if (refresh_token := await self._refresh_tokens.get_by_id(session_id)) is None:
             return False
 
-        return is_refresh_token_active(refresh_token)
+        return RefreshTokenService.is_active(refresh_token)
