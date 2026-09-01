@@ -49,6 +49,8 @@ def upgrade() -> None:
         sa.Column("token_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("replaced_by", sa.Uuid(), nullable=True),
+        sa.Column("replacement_secret", sa.String(length=64), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -60,6 +62,12 @@ def upgrade() -> None:
             ["user.id"],
             name=op.f("refresh_token_user_id_fkey"),
             ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["replaced_by"],
+            ["refresh_token.id"],
+            name=op.f("refresh_token_replaced_by_fkey"),
+            ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("refresh_token_pkey")),
     )

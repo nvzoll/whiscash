@@ -24,13 +24,12 @@ class RefreshTokenRepo(Protocol):
 
     async def add(self, refresh_token: RefreshToken) -> None: ...
 
-    async def revoke(self, refresh_token: RefreshToken) -> bool: ...
+    async def revoke(
+        self,
+        refresh_token: RefreshToken,
+        *,
+        replaced_by: UUID | None = None,
+        replacement_secret: str | None = None,
+    ) -> bool: ...
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None: ...
-
-    async def get_active_by_family(
-        self,
-        *,
-        user_id: UUID,
-        family_id: UUID,
-    ) -> RefreshToken | None: ...

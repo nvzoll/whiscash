@@ -64,3 +64,14 @@ class RefreshToken(CreatedAtMixin, Base):
         nullable=True,
         default=None,
     )
+    replaced_by: Mapped[UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("refresh_token.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    replacement_secret: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        default=None,
+    )

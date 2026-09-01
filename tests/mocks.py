@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 
 from app.db.models import RefreshToken, User
 from app.repository.users import DuplicateEmailError
-from app.service.refresh_token import RefreshTokenService
 
 
 @dataclass
@@ -63,7 +62,13 @@ class MockRefreshTokenRepo:
             refresh_token.created_at = datetime.now(UTC)
         self._store.refresh_tokens[refresh_token.id] = refresh_token
 
-    async def revoke(self, refresh_token: RefreshToken) -> bool:
+    async def revoke(
+        self,
+        refresh_token: RefreshToken,
+        *,
+        replaced_by: UUID | None = None,
+        replacement_secret: str | None = None,
+    ) -> bool:
         async with self._store.revoke_lock:
             stored = self._store.refresh_tokens.get(refresh_token.id)
             if stored is None or stored.revoked_at is not None:
@@ -71,6 +76,11 @@ class MockRefreshTokenRepo:
             now = datetime.now(UTC)
             stored.revoked_at = now
             refresh_token.revoked_at = now
+            if replaced_by is not None:
+                stored.replaced_by = replaced_by
+                stored.replacement_secret = replacement_secret
+                refresh_token.replaced_by = replaced_by
+                refresh_token.replacement_secret = replacement_secret
             return True
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
@@ -82,23 +92,6 @@ class MockRefreshTokenRepo:
                 and token.revoked_at is None
             ):
                 token.revoked_at = now
-
-    async def get_active_by_family(
-        self,
-        *,
-        user_id: UUID,
-        family_id: UUID,
-    ) -> RefreshToken | None:
-        active = [
-            token
-            for token in self._store.refresh_tokens.values()
-            if token.user_id == user_id
-            and token.family_id == family_id
-            and RefreshTokenService.is_active(token)
-        ]
-        if not active:
-            return None
-        return max(active, key=lambda token: (token.created_at, token.id))
 
     def seed_session(self, user: User) -> UUID:
         token_id = uuid4()

@@ -101,10 +101,13 @@ class AuthService:
             user,
             family_id=old_token.family_id,
         )
+        rotated_id, rotated_secret = RefreshTokenService.parse(rotated)
 
-        if not await self._refresh_tokens.revoke(old_token):
-            rotated_id, _ = RefreshTokenService.parse(rotated)
-
+        if not await self._refresh_tokens.revoke(
+            old_token,
+            replaced_by=rotated_id,
+            replacement_secret=rotated_secret,
+        ):
             if (orphan := await self._refresh_tokens.get_by_id(rotated_id)) is not None:
                 await self._refresh_tokens.revoke(orphan)
 
@@ -185,7 +188,7 @@ class AuthService:
         family_id: UUID | None = None,
     ) -> tuple[UUID, str]:
         token_id = uuid4()
-        secret = RefreshTokenService.derive_secret(token_id)
+        secret = RefreshTokenService.generate_secret()
         session_family_id = family_id or uuid4()
         await self._refresh_tokens.add(
             RefreshToken(
@@ -230,15 +233,11 @@ class AuthService:
     ) -> AuthTokens:
         if (
             RefreshTokenService.is_within_reuse_grace(refresh_token.revoked_at)
-            and (
-                successor := await self._refresh_tokens.get_active_by_family(
-                    user_id=refresh_token.user_id,
-                    family_id=refresh_token.family_id,
-                )
-            )
-            is not None
+            and refresh_token.replaced_by is not None
+            and refresh_token.replacement_secret is not None
+            and (successor := await self._refresh_tokens.get_by_id(refresh_token.replaced_by)) is not None
+            and RefreshTokenService.is_active(successor)
         ):
-            secret = RefreshTokenService.derive_secret(successor.id)
             return AuthTokens(
                 access_token=AccessTokenService.create(
                     user.id,
@@ -246,7 +245,7 @@ class AuthService:
                     user.email_verified,
                     successor.id,
                 ),
-                refresh_token=RefreshTokenService.build(successor.id, secret),
+                refresh_token=RefreshTokenService.build(successor.id, refresh_token.replacement_secret),
                 expires_in=settings.jwt_expires_minutes * 60,
                 user=user,
             )

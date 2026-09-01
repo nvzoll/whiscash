@@ -1,7 +1,7 @@
+import secrets
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from hmac import compare_digest
-from hmac import new as hmac_new
 from uuid import UUID
 
 from app.core.config import settings
@@ -14,12 +14,8 @@ class RefreshTokenService:
         return sha256(secret.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def derive_secret(token_id: UUID) -> str:
-        return hmac_new(
-            settings.jwt_secret.encode("utf-8"),
-            token_id.bytes,
-            sha256,
-        ).hexdigest()
+    def generate_secret() -> str:
+        return secrets.token_urlsafe(32)
 
     @staticmethod
     def build(token_id: UUID, secret: str) -> str:
