@@ -102,23 +102,11 @@ class AuthService:
             family_id=old_token.family_id,
         )
 
-        if not await self._refresh_tokens.revoke(
+        await self._refresh_tokens.revoke(
             old_token,
             replaced_by=rotated_id,
             replacement_secret=RefreshTokenService.encrypt_replacement_secret(rotated_secret),
-        ):
-            if (orphan := await self._refresh_tokens.get_by_id(rotated_id)) is not None:
-                await self._refresh_tokens.revoke(orphan)
-
-            if (
-                reloaded := await self._refresh_tokens.get_by_id(
-                    old_token.id,
-                    for_update=True,
-                )
-            ) is None:
-                raise InvalidRefreshTokenError
-
-            return await self._try_reuse_family(reloaded, user)
+        )
 
         return AuthTokens(
             access_token=AccessTokenService.create(

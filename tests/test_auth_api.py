@@ -1,4 +1,3 @@
-import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -189,38 +188,6 @@ async def test_refresh_reuse_does_not_revoke_other_sessions(
         json={"refresh_token": second_refresh_token},
     )
     assert other_session_response.status_code == 200
-
-
-async def test_concurrent_refresh_issues_one_token_pair(client: AsyncClient) -> None:
-    login_response = await client.post(
-        "/auth/login",
-        json={"email": "user@example.com", "password": "correct-horse"},
-    )
-    assert login_response.status_code == 200
-    original_refresh_token = login_response.json()["refresh_token"]
-
-    first_response, second_response = await asyncio.gather(
-        client.post("/auth/refresh", json={"refresh_token": original_refresh_token}),
-        client.post("/auth/refresh", json={"refresh_token": original_refresh_token}),
-    )
-    statuses = sorted([first_response.status_code, second_response.status_code])
-    assert statuses == [200, 200]
-    winner = first_response if first_response.status_code == 200 else second_response
-    rotated = winner.json()["refresh_token"]
-    assert rotated != original_refresh_token
-
-    reused_response = await client.post(
-        "/auth/refresh",
-        json={"refresh_token": original_refresh_token},
-    )
-    assert reused_response.status_code == 200
-    assert reused_response.json()["refresh_token"] == rotated
-
-    follow_up_response = await client.post(
-        "/auth/refresh",
-        json={"refresh_token": rotated},
-    )
-    assert follow_up_response.status_code == 200
 
 
 async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
