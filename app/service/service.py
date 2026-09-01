@@ -97,11 +97,10 @@ class AuthService:
         if not RefreshTokenService.is_active(old_token):
             raise InvalidRefreshTokenError
 
-        session_id, rotated = await self._issue_refresh_token(
+        rotated_id, rotated_secret = await self._issue_refresh_token(
             user,
             family_id=old_token.family_id,
         )
-        rotated_id, rotated_secret = RefreshTokenService.parse(rotated)
 
         if not await self._refresh_tokens.revoke(
             old_token,
@@ -126,9 +125,9 @@ class AuthService:
                 user.id,
                 user.email,
                 user.email_verified,
-                session_id,
+                rotated_id,
             ),
-            refresh_token=rotated,
+            refresh_token=RefreshTokenService.build(rotated_id, rotated_secret),
             expires_in=settings.jwt_expires_minutes * 60,
             user=user,
         )
@@ -168,7 +167,7 @@ class AuthService:
         return user
 
     async def _issue_tokens(self, user: User) -> AuthTokens:
-        session_id, refresh_token = await self._issue_refresh_token(user)
+        session_id, secret = await self._issue_refresh_token(user)
         return AuthTokens(
             access_token=AccessTokenService.create(
                 user.id,
@@ -176,7 +175,7 @@ class AuthService:
                 user.email_verified,
                 session_id,
             ),
-            refresh_token=refresh_token,
+            refresh_token=RefreshTokenService.build(session_id, secret),
             expires_in=settings.jwt_expires_minutes * 60,
             user=user,
         )
@@ -200,7 +199,7 @@ class AuthService:
                 created_at=datetime.now(UTC),
             )
         )
-        return token_id, RefreshTokenService.build(token_id, secret)
+        return token_id, secret
 
     async def _load_refresh_token(
         self,
