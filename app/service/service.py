@@ -1,8 +1,6 @@
 import asyncio
-import random
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from secrets import token_urlsafe
 from typing import Annotated, Self
 from uuid import UUID, uuid4
 
@@ -22,6 +20,8 @@ from app.service.exceptions import (
 )
 from app.service.password import PasswordService
 from app.service.refresh_token import RefreshTokenService
+
+_DUMMY_HASH = PasswordService.hash("x" * 32)
 
 
 @dataclass(frozen=True)
@@ -72,9 +72,7 @@ class AuthService:
 
     async def login(self, email: str, password: str) -> AuthTokens:
         if (user := await self._users.get_by_email(email)) is None:
-            pmin, pmax = settings.password_limits
-            dummy = token_urlsafe(random.randint(pmin, pmax - 1))
-            await asyncio.to_thread(PasswordService.hash, dummy)
+            await asyncio.to_thread(PasswordService.verify, password, _DUMMY_HASH)
             raise InvalidCredentialsError
 
         password_matches = await asyncio.to_thread(
