@@ -98,8 +98,9 @@ async def test_issue_and_validate_refresh_token(
     service = AuthService(MockUserRepo(mock_store), MockRefreshTokenRepo(mock_store))
     tokens = await service.login("user@example.com", "correct-horse")
 
-    resolved = await service._resolve_refresh_token(tokens.refresh_token, for_update=False)
-    refresh_token, user = resolved
+    refresh_token = await service._load_refresh_token(tokens.refresh_token, for_update=False)
+    user = await service._users.get_by_id(refresh_token.user_id)
+    assert user is not None
     assert refresh_token.user_id == user.id
     assert user.email == "user@example.com"
 
@@ -129,7 +130,7 @@ async def test_revoke_refresh_token_claims_only_once(
 
     async def claim() -> bool:
         try:
-            refresh_token, _ = await service._resolve_refresh_token(
+            refresh_token = await service._load_refresh_token(
                 tokens.refresh_token,
                 for_update=True,
             )

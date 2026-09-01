@@ -236,6 +236,12 @@ async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
     )
     assert logout_response.status_code == 204
 
+    second_logout = await client.post(
+        "/auth/logout",
+        json={"refresh_token": refresh_token},
+    )
+    assert second_logout.status_code == 204
+
     refresh_response = await client.post(
         "/auth/refresh",
         json={"refresh_token": refresh_token},

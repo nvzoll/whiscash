@@ -86,7 +86,10 @@ class AuthService:
         return await self._issue_tokens(user)
 
     async def refresh(self, refresh_token: str) -> AuthTokens:
-        old_token, user = await self._load_refresh_token(refresh_token, for_update=True)
+        old_token = await self._load_refresh_token(refresh_token, for_update=True)
+
+        if (user := await self._users.get_by_id(old_token.user_id)) is None:
+            raise InvalidRefreshTokenError
 
         if old_token.revoked_at is not None:
             return await self._try_reuse_family(old_token, user)
@@ -127,9 +130,9 @@ class AuthService:
             user=user,
         )
 
-    async def logout(self, refresh_token: str) -> None:
-        old_token, _ = await self._resolve_refresh_token(refresh_token, for_update=True)
-        if not await self._refresh_tokens.revoke(old_token):
+    async def logout(self, token_str: str) -> None:
+        refresh_token = await self._load_refresh_token(token_str, for_update=True)
+        if RefreshTokenService.is_active(refresh_token) and not await self._refresh_tokens.revoke(refresh_token):
             raise InvalidRefreshTokenError
 
     async def authenticate_access_token(self, token: str) -> User:
@@ -201,7 +204,7 @@ class AuthService:
         token: str,
         *,
         for_update: bool,
-    ) -> tuple[RefreshToken, User]:
+    ) -> RefreshToken:
         try:
             token_id, secret = RefreshTokenService.parse(token)
         except ValueError as error:
@@ -218,21 +221,7 @@ class AuthService:
         if not RefreshTokenService.verify_secret(secret, refresh_token.token_hash):
             raise InvalidRefreshTokenError
 
-        if (user := await self._users.get_by_id(refresh_token.user_id)) is None:
-            raise InvalidRefreshTokenError
-
-        return refresh_token, user
-
-    async def _resolve_refresh_token(
-        self,
-        token: str,
-        *,
-        for_update: bool,
-    ) -> tuple[RefreshToken, User]:
-        refresh_token, user = await self._load_refresh_token(token, for_update=for_update)
-        if not RefreshTokenService.is_active(refresh_token):
-            raise InvalidRefreshTokenError
-        return refresh_token, user
+        return refresh_token
 
     async def _try_reuse_family(
         self,
@@ -246,7 +235,8 @@ class AuthService:
                     user_id=refresh_token.user_id,
                     family_id=refresh_token.family_id,
                 )
-            ) is not None
+            )
+            is not None
         ):
             secret = RefreshTokenService.derive_secret(successor.id)
             return AuthTokens(
