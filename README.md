@@ -73,7 +73,7 @@ uv run uvicorn app.core.main:app --reload
 
 ## Configuration
 
-Settings load from environment variables or a `.env` file.
+Settings load from environment variables and `.secrets.json` file.
 
 | Variable | Default |
 | --- | --- |

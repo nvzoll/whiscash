@@ -1,6 +1,6 @@
 import argparse
 
-from command import secrets, service_key
+from cli.command import secrets, service_key
 
 COMMANDS = [secrets, service_key]
 
