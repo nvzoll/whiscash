@@ -39,6 +39,8 @@ OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 | `mise uvr` | `uv run` with env variables loaded |
 | `mise run gen-secrets` | Generate .secrets.json |
 | `mise run create-service-key -- <name>` | Issue a new service-client API key (prints once) |
+| `mise run revoke-service-key -- <name>` | Revoke that service's active API key |
+| `mise run list-service-keys` | List service-client API keys and their status |
 
 Reset schema:
 
@@ -113,7 +115,18 @@ Some endpoints (currently `/auth/password-reset/request`) are only callable by a
 mise run create-service-key -- <name>
 ```
 
-This prints the raw key once — it is not recoverable afterwards, only its hash is stored. There's no revocation UI yet; set `revoked_at` on the `service_client` row directly if a key needs to be pulled.
+This prints the raw key once — it is not recoverable afterwards, only its hash is stored.
+
+To pull a key, revoke it by name:
+
+```sh
+mise run revoke-service-key -- <name>
+mise run list-service-keys
+```
+
+Revocation takes effect immediately: `/auth/password-reset/request` rejects a revoked key with `401 invalid_service_key`.
+
+A name is unique among *live* keys only, so rotation is revoke-then-re-mint under the same name. The revoked row keeps its name as a record of what was issued; only one key per name is ever active.
 
 ## Schema
 

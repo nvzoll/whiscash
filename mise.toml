@@ -35,3 +35,13 @@ run = "uv run cli.py secrets generate"
 description = "Issue a new service-client API key (prints once)"
 dir = "cli"
 run = "uv run cli.py service-key new"
+
+[tasks.revoke-service-key]
+description = "Revoke a service-client API key by name"
+dir = "cli"
+run = "uv run cli.py service-key revoke"
+
+[tasks.list-service-keys]
+description = "List service-client API keys"
+dir = "cli"
+run = "uv run cli.py service-key list"

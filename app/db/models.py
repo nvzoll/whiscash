@@ -5,10 +5,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     MetaData,
     String,
     Uuid,
     false,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -101,6 +103,14 @@ class PasswordResetToken(CreatedAtMixin, Base):
 
 class ServiceClient(CreatedAtMixin, Base):
     __tablename__ = "service_client"
+    __table_args__ = (
+        Index(
+            "service_client_active_name_idx",
+            "name",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(128))

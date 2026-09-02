@@ -72,9 +72,17 @@ def upgrade() -> None:
         ["key_hash"],
         unique=True,
     )
+    op.create_index(
+        "service_client_active_name_idx",
+        "service_client",
+        ["name"],
+        unique=True,
+        postgresql_where=sa.text("revoked_at IS NULL"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("service_client_active_name_idx", table_name="service_client")
     op.drop_index(op.f("service_client_key_hash_idx"), table_name="service_client")
     op.drop_table("service_client")
     op.drop_index(op.f("password_reset_token_expires_at_idx"), table_name="password_reset_token")

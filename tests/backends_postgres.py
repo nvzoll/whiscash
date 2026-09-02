@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from testcontainers.community.postgres import PostgresContainer
 
@@ -97,5 +98,9 @@ class AutoCommitPasswordResetTokenRepo(SqlPasswordResetTokenRepo):
 
 class AutoCommitServiceClientRepo(SqlServiceClientRepo):
     async def add(self, client: ServiceClient) -> None:
-        await super().add(client)
+        try:
+            await super().add(client)
+        except IntegrityError:
+            await self._session.rollback()
+            raise
         await self._session.commit()
