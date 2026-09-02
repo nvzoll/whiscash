@@ -4,7 +4,6 @@ from typing import Any, Self
 import pytest
 from fastapi import FastAPI, HTTPException, status
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.exc import PendingRollbackError
 
 import app.db.session as session_module
 from app.db.session import SessionDependency
@@ -77,7 +76,7 @@ async def test_failed_commit_is_not_reported_as_success(
     assert session.commits == 0
 
 
-async def test_http_exception_commits_so_family_revocation_survives(
+async def test_http_exception_rolls_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = FakeSession()
@@ -85,18 +84,7 @@ async def test_http_exception_commits_so_family_revocation_survives(
         response = await client.get("/probe")
 
     assert response.status_code == 401
-    assert session.commits == 1
-    assert session.rollbacks == 0
-
-
-async def test_http_exception_with_pending_rollback_keeps_original_status(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    session = FakeSession(commit_error=PendingRollbackError("flush failed"))
-    async with make_client(monkeypatch, session, http_error_endpoint) as client:
-        response = await client.get("/probe")
-
-    assert response.status_code == 401
+    assert session.commits == 0
     assert session.rollbacks == 1
 
 

@@ -1,8 +1,7 @@
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, HTTPException
-from sqlalchemy.exc import PendingRollbackError
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
@@ -15,12 +14,6 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         try:
             yield session
-        except HTTPException:
-            try:
-                await session.commit()
-            except PendingRollbackError:
-                await session.rollback()
-            raise
         except Exception:
             await session.rollback()
             raise

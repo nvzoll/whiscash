@@ -74,6 +74,8 @@ class SqlRefreshTokenRepo:
             .values(revoked_at=now)
         )
 
+        await self._session.commit()
+
     async def revoke_all_for_user(self, *, user_id: UUID) -> None:
         now = datetime.now(UTC)
         await self._session.execute(
