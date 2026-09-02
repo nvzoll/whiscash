@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 import asyncio
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from app.db.models import RefreshToken, User
@@ -88,16 +86,3 @@ class MockRefreshTokenRepo:
         for token in self._store.refresh_tokens.values():
             if token.user_id == user_id and token.family_id == family_id and token.revoked_at is None:
                 token.revoked_at = now
-
-    def seed_session(self, user: User) -> UUID:
-        token_id = uuid4()
-        refresh_token = RefreshToken(
-            id=token_id,
-            user_id=user.id,
-            family_id=uuid4(),
-            token_hash="test-token-hash",
-            expires_at=datetime.now(UTC) + timedelta(days=30),
-            created_at=datetime.now(UTC),
-        )
-        self._store.refresh_tokens[token_id] = refresh_token
-        return token_id

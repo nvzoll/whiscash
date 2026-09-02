@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 import pytest
@@ -7,32 +7,19 @@ from fastapi.security import HTTPAuthorizationCredentials
 from httpx import AsyncClient, Response
 
 from app.controller.deps import get_current_user
-from app.core.config import settings
 from app.db.models import User
+from app.repository.protocols import RefreshTokenRepo, UserRepo
 from app.service.access_token import AccessTokenService
 from app.service.password import PasswordService
-from app.service.service import _DUMMY_HASH
-from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
-
-
-def expire_refresh_reuse_grace(mock_store: MockStore) -> None:
-    past = datetime.now(UTC) - timedelta(seconds=settings.jwt_refresh_reuse_grace_seconds + 1)
-    for token in mock_store.refresh_tokens.values():
-        if token.revoked_at is not None:
-            token.revoked_at = past
-
-
-def auth_service(store: MockStore):
-    from app.service.service import AuthService
-
-    return AuthService(MockUserRepo(store), MockRefreshTokenRepo(store))
+from app.service.service import _DUMMY_HASH, AuthService
+from tests.support import seed_session
 
 
 async def create_session_access_token(
-    mock_store: MockStore,
+    refresh_token_repo: RefreshTokenRepo,
     user: User,
 ) -> str:
-    session_id = MockRefreshTokenRepo(mock_store).seed_session(user)
+    session_id = await seed_session(refresh_token_repo, user)
     return AccessTokenService.create(
         user.id,
         user.email,
@@ -124,7 +111,7 @@ async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
 
 async def test_refresh_reuse_after_grace_revokes_family(
     client: AsyncClient,
-    mock_store: MockStore,
+    expire_refresh_reuse_grace: Callable[[], Awaitable[None]],
 ) -> None:
     login_response = await client.post(
         "/auth/login",
@@ -140,7 +127,7 @@ async def test_refresh_reuse_after_grace_revokes_family(
     assert refresh_response.status_code == 200
     new_refresh_token = refresh_response.json()["refresh_token"]
 
-    expire_refresh_reuse_grace(mock_store)
+    await expire_refresh_reuse_grace()
 
     reused_response = await client.post(
         "/auth/refresh",
@@ -460,10 +447,10 @@ async def test_get_me_rejects_access_token_for_unknown_session(
 
 async def test_patch_me_updates_profile(
     client: AsyncClient,
-    mock_store: MockStore,
+    refresh_token_repo: RefreshTokenRepo,
     seeded_user: User,
 ) -> None:
-    token = await create_session_access_token(mock_store, seeded_user)
+    token = await create_session_access_token(refresh_token_repo, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
@@ -498,11 +485,11 @@ async def test_patch_me_updates_profile(
 )
 async def test_patch_me_rejects_empty_update(
     client: AsyncClient,
-    mock_store: MockStore,
+    refresh_token_repo: RefreshTokenRepo,
     seeded_user: User,
     payload: dict[str, None],
 ) -> None:
-    token = await create_session_access_token(mock_store, seeded_user)
+    token = await create_session_access_token(refresh_token_repo, seeded_user)
     response = await client.patch(
         "/auth/me",
         headers={"Authorization": f"Bearer {token}"},
@@ -579,39 +566,43 @@ async def test_patch_me_rejects_access_token_for_unknown_user(
 
 
 async def test_get_current_user_rejects_missing_credentials(
-    mock_store: MockStore,
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
 ) -> None:
-    service = auth_service(mock_store)
+    service = AuthService(user_repo, refresh_token_repo)
     with pytest.raises(HTTPException) as error:
         await get_current_user(None, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_non_bearer_scheme(
-    mock_store: MockStore,
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
 ) -> None:
     credentials = HTTPAuthorizationCredentials(scheme="Basic", credentials="abc")
-    service = auth_service(mock_store)
+    service = AuthService(user_repo, refresh_token_repo)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_invalid_token(
-    mock_store: MockStore,
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
 ) -> None:
     credentials = HTTPAuthorizationCredentials(
         scheme="Bearer",
         credentials="not-a-token",
     )
-    service = auth_service(mock_store)
+    service = AuthService(user_repo, refresh_token_repo)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_unknown_user(
-    mock_store: MockStore,
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
 ) -> None:
     token = AccessTokenService.create(
         uuid4(),
@@ -620,14 +611,15 @@ async def test_get_current_user_rejects_unknown_user(
         session_id=uuid4(),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = auth_service(mock_store)
+    service = AuthService(user_repo, refresh_token_repo)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_unknown_session(
-    mock_store: MockStore,
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
     seeded_user: User,
 ) -> None:
     token = AccessTokenService.create(
@@ -637,19 +629,20 @@ async def test_get_current_user_rejects_unknown_session(
         uuid4(),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = auth_service(mock_store)
+    service = AuthService(user_repo, refresh_token_repo)
     with pytest.raises(HTTPException) as error:
         await get_current_user(credentials, service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_returns_matching_user(
-    mock_store: MockStore,
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
     seeded_user: User,
 ) -> None:
-    token = await create_session_access_token(mock_store, seeded_user)
+    token = await create_session_access_token(refresh_token_repo, seeded_user)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = auth_service(mock_store)
+    service = AuthService(user_repo, refresh_token_repo)
     user = await get_current_user(credentials, service)
     assert user.id == seeded_user.id
     assert user.email == seeded_user.email

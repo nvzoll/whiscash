@@ -9,4 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
+.pytest_cache
+.ruff_cache
+
 .secrets.json

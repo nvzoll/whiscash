@@ -115,17 +115,17 @@ Review the generated file, then `mise run migrate` or `uv run alembic upgrade he
 ## Tests
 
 ```sh
-uv run pytest
+uv run pytest # Against mocked repo objects
+uv run pytest --db-backend=postgres # Against one-shot postgres container
 ```
 
-API tests use an in-memory mock session and do not need Postgres.
+Default API tests use mocked repository objects and do not need Postgres.
 
-The purge sidecar (`sidecar/`) is a separate uv project with its own
-dependencies and tests:
+The purge sidecar (`sidecar/`) is a separate uv project with its own dependencies and tests:
 
 ```sh
 cd sidecar
 uv run pytest
 ```
 
-Sidecar tests run against an in-memory SQLite engine and do not need Postgres either.
+Sidecar tests run against an in-memory SQLite engine and do not need Postgres.
