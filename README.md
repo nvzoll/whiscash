@@ -12,10 +12,9 @@ FastAPI + Postgres.
 
 ## Quick start
 
-Do `mise run gen-secrets` to generate random `JWT_SECRET` and `REFRESH_TOKEN_KEY`
-in a gitignored `.secrets.json` in the project root.
+Do `mise run gen-secrets` to generate random `JWT_SECRET` and `REFRESH_TOKEN_KEY` in a gitignored `.secrets.json` in the project root.
 
-`mise run` loads that file into the task environment.
+`mise run` loads that file into the task environment with non-secret env vars from mise.toml.
 
 You can also encrypt that file with `sops` and mise will [decrypt](https://mise.jdx.dev/environments/secrets/sops.html) it on every `mise run`.
 
@@ -145,3 +144,4 @@ uv run pytest
 ```
 
 Sidecar tests run against an in-memory SQLite engine and do not need Postgres.
+

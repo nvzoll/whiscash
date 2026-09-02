@@ -2,14 +2,6 @@
 _.file = { path = ".secrets.json", redact = true }
 database_url = "postgresql+asyncpg://auth:auth@localhost:5432/auth"
 
-[tasks.gen-secrets]
-description = "Generate JWT and refresh token secrets"
-run = "uv run scripts/generate_secrets.py"
-
-[tasks.create-service-key]
-description = "Issue a new service-client API key (prints once)"
-run = "uv run python -m scripts.create_service_key"
-
 [tasks.start]
 description = "Start docker compose"
 run = "docker compose up --build -d --wait"
@@ -33,3 +25,13 @@ run = "uv run alembic upgrade head"
 [tasks.uvr]
 description = "Literally uv run"
 run = "uv run"
+
+[tasks.gen-secrets]
+description = "Generate JWT and refresh token secrets"
+dir = "cli"
+run = "uv run cli.py secrets generate"
+
+[tasks.create-service-key]
+description = "Issue a new service-client API key (prints once)"
+dir = "cli"
+run = "uv run cli.py service-key new"
