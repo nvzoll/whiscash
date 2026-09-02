@@ -1,7 +1,7 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.db.models import RefreshToken, User
+from app.db.models import PasswordResetToken, RefreshToken, ServiceClient, User
 
 
 class UserRepo(Protocol):
@@ -33,3 +33,24 @@ class RefreshTokenRepo(Protocol):
     ) -> bool: ...
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None: ...
+
+    async def revoke_all_for_user(self, *, user_id: UUID) -> None: ...
+
+
+class PasswordResetTokenRepo(Protocol):
+    async def get_by_id(
+        self,
+        token_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> PasswordResetToken | None: ...
+
+    async def add(self, token: PasswordResetToken) -> None: ...
+
+    async def mark_used(self, token: PasswordResetToken) -> bool: ...
+
+
+class ServiceClientRepo(Protocol):
+    async def get_by_key_hash(self, key_hash: str) -> ServiceClient | None: ...
+
+    async def add(self, client: ServiceClient) -> None: ...

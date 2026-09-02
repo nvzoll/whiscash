@@ -7,8 +7,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from testcontainers.community.postgres import PostgresContainer
 
-from app.db.models import RefreshToken, User
+from app.db.models import PasswordResetToken, RefreshToken, ServiceClient, User
+from app.repository.password_reset_tokens import SqlPasswordResetTokenRepo
 from app.repository.refresh_tokens import SqlRefreshTokenRepo
+from app.repository.service_clients import SqlServiceClientRepo
 from app.repository.users import DuplicateEmailError, SqlUserRepo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -35,6 +37,7 @@ def run_migrations(database_url: str) -> None:
 
 async def truncate_all(session: AsyncSession) -> None:
     await session.execute(text('TRUNCATE TABLE "user" RESTART IDENTITY CASCADE'))
+    await session.execute(text("TRUNCATE TABLE service_client RESTART IDENTITY CASCADE"))
     await session.commit()
 
 
@@ -74,4 +77,25 @@ class AutoCommitRefreshTokenRepo(SqlRefreshTokenRepo):
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
         await super().revoke_family(user_id=user_id, family_id=family_id)
+        await self._session.commit()
+
+    async def revoke_all_for_user(self, *, user_id: UUID) -> None:
+        await super().revoke_all_for_user(user_id=user_id)
+        await self._session.commit()
+
+
+class AutoCommitPasswordResetTokenRepo(SqlPasswordResetTokenRepo):
+    async def add(self, token: PasswordResetToken) -> None:
+        await super().add(token)
+        await self._session.commit()
+
+    async def mark_used(self, token: PasswordResetToken) -> bool:
+        result = await super().mark_used(token)
+        await self._session.commit()
+        return result
+
+
+class AutoCommitServiceClientRepo(SqlServiceClientRepo):
+    async def add(self, client: ServiceClient) -> None:
+        await super().add(client)
         await self._session.commit()

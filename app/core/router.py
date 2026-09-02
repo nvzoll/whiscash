@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Response, status
 
-from app.controller.deps import AuthControllerDependency, CurrentUserDependency
+from app.controller.deps import AuthControllerDependency, CurrentServiceClientDependency, CurrentUserDependency
 from app.controller.validations import (
     AuthResponse,
     LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetIssued,
+    PasswordResetRequest,
     ProfileUpdate,
     RefreshRequest,
     SignupRequest,
@@ -65,3 +68,21 @@ async def update_self(
     controller: AuthControllerDependency,
 ) -> UserResponse:
     return await controller.update_self(payload, user)
+
+
+@router.post("/password-reset/request", response_model=PasswordResetIssued)
+async def request_password_reset(
+    payload: PasswordResetRequest,
+    controller: AuthControllerDependency,
+    _service_client: CurrentServiceClientDependency,
+) -> PasswordResetIssued:
+    return await controller.request_password_reset(payload)
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def confirm_password_reset(
+    payload: PasswordResetConfirm,
+    controller: AuthControllerDependency,
+) -> Response:
+    await controller.confirm_password_reset(payload)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

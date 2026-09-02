@@ -6,6 +6,9 @@ from app.controller.exceptions import to_http
 from app.controller.validations import (
     AuthResponse,
     LoginRequest,
+    PasswordResetConfirm,
+    PasswordResetIssued,
+    PasswordResetRequest,
     ProfileUpdate,
     RefreshRequest,
     SignupRequest,
@@ -72,6 +75,19 @@ class AuthController:
             raise to_http(error) from error
 
         return UserResponse.model_validate(updated)
+
+    async def request_password_reset(self, payload: PasswordResetRequest) -> PasswordResetIssued:
+        try:
+            token = await self._service.request_password_reset(str(payload.email))
+        except DomainError as error:
+            raise to_http(error) from error
+        return PasswordResetIssued(reset_token=token)
+
+    async def confirm_password_reset(self, payload: PasswordResetConfirm) -> None:
+        try:
+            await self._service.confirm_password_reset(payload.token, payload.new_password)
+        except DomainError as error:
+            raise to_http(error) from error
 
     @staticmethod
     def _to_auth_response(tokens: AuthTokens) -> AuthResponse:

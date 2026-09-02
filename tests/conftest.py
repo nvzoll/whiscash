@@ -2,6 +2,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 os.environ.setdefault("JWT_SECRET", "unit-test-secret-change-me-32-bytes")
 os.environ.setdefault("REFRESH_TOKEN_KEY", "PEeqpiAF7QRc9En7kJBm1VpRUX4UCCiOroUIBvn6GhU=")
@@ -17,20 +18,31 @@ from testcontainers.community.postgres import PostgresContainer
 from app.core.config import settings
 from app.core.main import app
 from app.db import session as db_session
-from app.db.models import RefreshToken, User
-from app.repository.protocols import RefreshTokenRepo, UserRepo
+from app.db.models import PasswordResetToken, RefreshToken, ServiceClient, User
+from app.repository.password_reset_tokens import SqlPasswordResetTokenRepo
+from app.repository.protocols import PasswordResetTokenRepo, RefreshTokenRepo, ServiceClientRepo, UserRepo
 from app.repository.refresh_tokens import SqlRefreshTokenRepo
+from app.repository.service_clients import SqlServiceClientRepo
 from app.repository.users import SqlUserRepo
 from app.service.password import PasswordService
 from tests.backends_postgres import (
+    AutoCommitPasswordResetTokenRepo,
     AutoCommitRefreshTokenRepo,
+    AutoCommitServiceClientRepo,
     AutoCommitUserRepo,
     async_url,
     run_migrations,
     start_container,
     truncate_all,
 )
-from tests.mocks import MockRefreshTokenRepo, MockStore, MockUserRepo
+from tests.mocks import (
+    MockPasswordResetTokenRepo,
+    MockRefreshTokenRepo,
+    MockServiceClientRepo,
+    MockStore,
+    MockUserRepo,
+)
+from tests.support import seed_service_client
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -123,6 +135,32 @@ async def refresh_token_repo(
 
 
 @pytest.fixture
+async def password_reset_token_repo(
+    db_backend: str,
+    mock_store: MockStore,
+    pg_session: AsyncSession | None,
+    pg_cleanup: None,
+) -> PasswordResetTokenRepo:
+    if db_backend == "postgres":
+        assert pg_session is not None
+        return AutoCommitPasswordResetTokenRepo(pg_session)
+    return MockPasswordResetTokenRepo(mock_store)
+
+
+@pytest.fixture
+async def service_client_repo(
+    db_backend: str,
+    mock_store: MockStore,
+    pg_session: AsyncSession | None,
+    pg_cleanup: None,
+) -> ServiceClientRepo:
+    if db_backend == "postgres":
+        assert pg_session is not None
+        return AutoCommitServiceClientRepo(pg_session)
+    return MockServiceClientRepo(mock_store)
+
+
+@pytest.fixture
 async def make_refresh_token_repo(
     db_backend: str,
     mock_store: MockStore,
@@ -171,6 +209,27 @@ def expire_refresh_reuse_grace(
 
 
 @pytest.fixture
+def expire_password_reset_token(
+    db_backend: str,
+    mock_store: MockStore,
+    pg_session: AsyncSession | None,
+) -> Callable[[UUID], Awaitable[None]]:
+    async def expire_mock(token_id: UUID) -> None:
+        mock_store.password_reset_tokens[token_id].expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    async def expire_postgres(token_id: UUID) -> None:
+        assert pg_session is not None
+        await pg_session.execute(
+            update(PasswordResetToken)
+            .where(PasswordResetToken.id == token_id)
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await pg_session.commit()
+
+    return expire_postgres if db_backend == "postgres" else expire_mock
+
+
+@pytest.fixture
 async def seeded_user(user_repo: UserRepo) -> User:
     user = User(
         email="user@example.com",
@@ -182,11 +241,34 @@ async def seeded_user(user_repo: UserRepo) -> User:
 
 
 @pytest.fixture
+async def seeded_service_client(service_client_repo: ServiceClientRepo) -> tuple[ServiceClient, str]:
+    return await seed_service_client(service_client_repo)
+
+
+@pytest.fixture
+async def revoked_service_client(service_client_repo: ServiceClientRepo) -> tuple[ServiceClient, str]:
+    return await seed_service_client(service_client_repo, name="revoked-consumer", revoked=True)
+
+
+@pytest.fixture
+async def unverified_user(user_repo: UserRepo) -> User:
+    user = User(
+        email="unverified@example.com",
+        password_hash=PasswordService.hash("correct-horse"),
+        email_verified=False,
+    )
+    await user_repo.add(user)
+    return user
+
+
+@pytest.fixture
 async def client(
     db_backend: str,
     pg_engine: AsyncEngine | None,
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[AsyncClient]:
@@ -196,6 +278,8 @@ async def client(
     else:
         app.dependency_overrides[SqlUserRepo.new] = lambda: user_repo
         app.dependency_overrides[SqlRefreshTokenRepo.new] = lambda: refresh_token_repo
+        app.dependency_overrides[SqlPasswordResetTokenRepo.new] = lambda: password_reset_token_repo
+        app.dependency_overrides[SqlServiceClientRepo.new] = lambda: service_client_repo
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

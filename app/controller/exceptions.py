@@ -5,7 +5,9 @@ from app.service.exceptions import (
     DomainError,
     InvalidAccessTokenError,
     InvalidCredentialsError,
+    InvalidPasswordResetTokenError,
     InvalidRefreshTokenError,
+    InvalidServiceKeyError,
     PermissionDeniedError,
     TokenExpiredError,
     UserAlreadyExistsError,
@@ -78,6 +80,24 @@ class PermissionDeniedHTTP(BaseHTTPException):
     default_detail = "Permission denied"
 
 
+class InvalidPasswordResetTokenHTTP(BaseHTTPException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    error = "invalid_password_reset_token"
+    default_detail = "Invalid or expired reset token"
+
+
+class InvalidServiceKeyHTTP(BaseHTTPException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    error = "invalid_service_key"
+    default_detail = "Invalid or revoked service key"
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(
+            detail=detail,
+            headers={"WWW-Authenticate": "ServiceKey"},
+        )
+
+
 _DOMAIN_HTTP_MAP = frozendict(
     {
         UserAlreadyExistsError: UserAlreadyExistsHTTP,
@@ -87,6 +107,8 @@ _DOMAIN_HTTP_MAP = frozendict(
         TokenExpiredError: TokenExpiredHTTP,
         UserNotFoundError: UserNotFoundHTTP,
         PermissionDeniedError: PermissionDeniedHTTP,
+        InvalidPasswordResetTokenError: InvalidPasswordResetTokenHTTP,
+        InvalidServiceKeyError: InvalidServiceKeyHTTP,
     }
 )
 

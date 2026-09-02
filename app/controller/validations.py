@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Any, Self
+from typing import Annotated, Any, Self
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     EmailStr,
     Field,
@@ -17,6 +18,13 @@ from app.core.config import settings
 
 def normalize_email(value: str) -> str:
     return value.strip().lower()
+
+
+def _normalize_email_before(value: Any) -> Any:
+    return normalize_email(value) if isinstance(value, str) else value
+
+
+NormalizedEmail = Annotated[EmailStr, BeforeValidator(_normalize_email_before)]
 
 
 def validate_password(value: str) -> str:
@@ -42,14 +50,9 @@ class RequestModel(BaseModel):
 
 
 class SignupRequest(RequestModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str
     display_name: str | None = Field(default=None, max_length=128)
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_email_field(cls, value: Any) -> Any:
-        return normalize_email(value) if isinstance(value, str) else value
 
     @field_validator("password")
     @classmethod
@@ -65,13 +68,8 @@ class SignupRequest(RequestModel):
 
 
 class LoginRequest(RequestModel):
-    email: EmailStr
+    email: NormalizedEmail
     password: str
-
-    @field_validator("email", mode="before")
-    @classmethod
-    def normalize_email_field(cls, value: Any) -> Any:
-        return normalize_email(value) if isinstance(value, str) else value
 
 
 class ProfileUpdate(RequestModel):
@@ -113,3 +111,21 @@ class AuthResponse(BaseModel):
 
 class RefreshRequest(RequestModel):
     refresh_token: str = Field(min_length=1)
+
+
+class PasswordResetRequest(RequestModel):
+    email: NormalizedEmail
+
+
+class PasswordResetIssued(BaseModel):
+    reset_token: str | None = None
+
+
+class PasswordResetConfirm(RequestModel):
+    token: str = Field(min_length=1)
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_field(cls, value: str) -> str:
+        return validate_password(value)

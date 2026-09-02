@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.db.models import RefreshToken, User
-from app.repository.protocols import RefreshTokenRepo, UserRepo
+from app.repository.protocols import PasswordResetTokenRepo, RefreshTokenRepo, ServiceClientRepo, UserRepo
 from app.service.exceptions import InvalidRefreshTokenError
 from app.service.refresh_token import RefreshTokenService
 from app.service.service import AuthService
@@ -44,7 +44,7 @@ def test_parse_round_trip() -> None:
     ],
 )
 def test_parse_rejects_invalid_values(token: str) -> None:
-    with pytest.raises(ValueError, match="invalid refresh token"):
+    with pytest.raises(ValueError, match="invalid opaque token"):
         RefreshTokenService.parse(token)
 
 
@@ -83,9 +83,11 @@ def test_is_active() -> None:
 async def test_issue_and_validate_refresh_token(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
 
     refresh_token = await service._load_refresh_token(tokens.refresh_token, for_update=False)
@@ -98,9 +100,11 @@ async def test_issue_and_validate_refresh_token(
 async def test_issue_refresh_token_does_not_persist_secret(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
     token_id, secret = RefreshTokenService.parse(tokens.refresh_token)
     stored = await refresh_token_repo.get_by_id(token_id)
@@ -116,15 +120,17 @@ async def test_issue_refresh_token_does_not_persist_secret(
 async def test_revoke_refresh_token_claims_only_once(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     make_refresh_token_repo: Callable[[], Awaitable[RefreshTokenRepo]],
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
 
     async def claim() -> bool:
         claim_refresh_tokens = await make_refresh_token_repo()
-        claim_service = AuthService(user_repo, claim_refresh_tokens)
+        claim_service = AuthService(user_repo, claim_refresh_tokens, password_reset_token_repo, service_client_repo)
         try:
             refresh_token = await claim_service._load_refresh_token(
                 tokens.refresh_token,
@@ -144,6 +150,8 @@ async def test_revoke_refresh_token_claims_only_once(
 async def test_expired_refresh_token_is_rejected(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
     secret = "refresh-secret"
@@ -156,7 +164,7 @@ async def test_expired_refresh_token_is_rejected(
     await refresh_token_repo.add(refresh_token)
     token = RefreshTokenService.build(refresh_token.id, secret)
 
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(InvalidRefreshTokenError):
         await service.refresh(token)
 
@@ -164,9 +172,11 @@ async def test_expired_refresh_token_is_rejected(
 async def test_rotation_keeps_family_id(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
     original_id, _ = RefreshTokenService.parse(tokens.refresh_token)
     original = await refresh_token_repo.get_by_id(original_id)
@@ -184,9 +194,11 @@ async def test_rotation_keeps_family_id(
 async def test_login_mints_new_family_id(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     first = await service.login("user@example.com", "correct-horse")
     second = await service.login("user@example.com", "correct-horse")
     first_id, _ = RefreshTokenService.parse(first.refresh_token)
@@ -202,10 +214,12 @@ async def test_login_mints_new_family_id(
 async def test_refresh_token_reuse_revokes_family(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     expire_refresh_reuse_grace: Callable[[], Awaitable[None]],
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
     original_id, _ = RefreshTokenService.parse(tokens.refresh_token)
 
@@ -231,9 +245,11 @@ async def test_refresh_token_reuse_revokes_family(
 async def test_reuse_with_corrupted_replacement_secret_revokes_family(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
     original_id, _ = RefreshTokenService.parse(tokens.refresh_token)
 
@@ -261,9 +277,11 @@ async def test_reuse_with_corrupted_replacement_secret_revokes_family(
 async def test_invalid_refresh_secret_does_not_revoke_family(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     tokens = await service.login("user@example.com", "correct-horse")
     rotated = await service.refresh(tokens.refresh_token)
     token_id, _ = RefreshTokenService.parse(tokens.refresh_token)
@@ -281,6 +299,8 @@ async def test_invalid_refresh_secret_does_not_revoke_family(
 async def test_expired_refresh_token_does_not_revoke_family(
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
     family_id = uuid4()
@@ -305,7 +325,7 @@ async def test_expired_refresh_token_does_not_revoke_family(
     )
     await refresh_token_repo.add(sibling)
 
-    service = AuthService(user_repo, refresh_token_repo)
+    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(InvalidRefreshTokenError):
         await service.refresh(expired_token)
 

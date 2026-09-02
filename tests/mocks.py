@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from app.db.models import RefreshToken, User
+from app.db.models import PasswordResetToken, RefreshToken, ServiceClient, User
 from app.repository.users import DuplicateEmailError
 
 
@@ -12,6 +12,8 @@ class MockStore:
     users: dict[UUID, User] = field(default_factory=dict)
     emails: dict[str, UUID] = field(default_factory=dict)
     refresh_tokens: dict[UUID, RefreshToken] = field(default_factory=dict)
+    password_reset_tokens: dict[UUID, PasswordResetToken] = field(default_factory=dict)
+    service_clients: dict[str, ServiceClient] = field(default_factory=dict)
     revoke_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -86,3 +88,48 @@ class MockRefreshTokenRepo:
         for token in self._store.refresh_tokens.values():
             if token.user_id == user_id and token.family_id == family_id and token.revoked_at is None:
                 token.revoked_at = now
+
+    async def revoke_all_for_user(self, *, user_id: UUID) -> None:
+        now = datetime.now(UTC)
+        for token in self._store.refresh_tokens.values():
+            if token.user_id == user_id and token.revoked_at is None:
+                token.revoked_at = now
+
+
+class MockPasswordResetTokenRepo:
+    def __init__(self, store: MockStore) -> None:
+        self._store = store
+
+    async def get_by_id(
+        self,
+        token_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> PasswordResetToken | None:
+        return self._store.password_reset_tokens.get(token_id)
+
+    async def add(self, token: PasswordResetToken) -> None:
+        if token.created_at is None:
+            token.created_at = datetime.now(UTC)
+        self._store.password_reset_tokens[token.id] = token
+
+    async def mark_used(self, token: PasswordResetToken) -> bool:
+        async with self._store.revoke_lock:
+            stored = self._store.password_reset_tokens.get(token.id)
+            if stored is None or stored.used_at is not None:
+                return False
+            now = datetime.now(UTC)
+            stored.used_at = now
+            token.used_at = now
+            return True
+
+
+class MockServiceClientRepo:
+    def __init__(self, store: MockStore) -> None:
+        self._store = store
+
+    async def get_by_key_hash(self, key_hash: str) -> ServiceClient | None:
+        return self._store.service_clients.get(key_hash)
+
+    async def add(self, client: ServiceClient) -> None:
+        self._store.service_clients[client.key_hash] = client

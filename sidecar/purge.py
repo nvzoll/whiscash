@@ -3,6 +3,7 @@ import asyncio
 import sys
 from datetime import UTC, datetime
 
+from password_reset_token_purge import purge_password_reset_tokens
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from refresh_token_purge import clear_expired_replacement_secrets, purge_expired_refresh_tokens
 from sqlalchemy import text
@@ -26,21 +27,27 @@ engine = create_async_engine(settings.database_url)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def run_purge_once(session: AsyncSession, *, batch_size: int, reuse_grace_seconds: int) -> tuple[int, int]:
+async def run_purge_once(
+    session: AsyncSession,
+    *,
+    batch_size: int,
+    reuse_grace_seconds: int,
+) -> tuple[int, int, int]:
     locked = await session.scalar(
         text("SELECT pg_try_advisory_xact_lock(:key)"),
         {"key": PURGE_LOCK_KEY},
     )
     if not locked:
-        return 0, 0
+        return 0, 0, 0
     deleted = await purge_expired_refresh_tokens(session, limit=batch_size)
     cleared = await clear_expired_replacement_secrets(
         session,
         grace_seconds=reuse_grace_seconds,
         limit=batch_size,
     )
+    deleted_reset_tokens = await purge_password_reset_tokens(session, limit=batch_size)
     await session.commit()
-    return deleted, cleared
+    return deleted, cleared, deleted_reset_tokens
 
 
 async def run_loop(*, interval_seconds: int, batch_size: int, once: bool) -> None:
@@ -48,13 +55,15 @@ async def run_loop(*, interval_seconds: int, batch_size: int, once: bool) -> Non
         while True:
             try:
                 async with SessionLocal() as session:
-                    deleted, cleared = await run_purge_once(
+                    deleted, cleared, deleted_reset_tokens = await run_purge_once(
                         session,
                         batch_size=batch_size,
                         reuse_grace_seconds=settings.jwt_refresh_reuse_grace_seconds,
                     )
                 print(
-                    f"{datetime.now(UTC).isoformat()} purged {deleted} expired refresh tokens, cleared {cleared} stale replacement secrets",
+                    f"{datetime.now(UTC).isoformat()} purged {deleted} expired refresh tokens, "
+                    f"cleared {cleared} stale replacement secrets, "
+                    f"purged {deleted_reset_tokens} expired/used password reset tokens",
                     flush=True,
                 )
             except SQLAlchemyError as error:

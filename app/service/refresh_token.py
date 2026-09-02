@@ -1,25 +1,20 @@
-import secrets
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
-from hmac import compare_digest
-from uuid import UUID
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.core.config import settings
 from app.db.models import RefreshToken
+from app.service.opaque_token import OpaqueToken
 
 _fernet = Fernet(settings.refresh_token_key)
 
 
 class RefreshTokenService:
-    @staticmethod
-    def hash_secret(secret: str) -> str:
-        return sha256(secret.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def generate_secret() -> str:
-        return secrets.token_urlsafe(32)
+    hash_secret = staticmethod(OpaqueToken.hash_secret)
+    generate_secret = staticmethod(OpaqueToken.generate_secret)
+    build = staticmethod(OpaqueToken.build)
+    parse = staticmethod(OpaqueToken.parse)
+    verify_secret = staticmethod(OpaqueToken.verify_secret)
 
     @staticmethod
     def enc_replacement_secret(secret: str) -> str:
@@ -31,27 +26,6 @@ class RefreshTokenService:
             return _fernet.decrypt(token.encode("utf-8")).decode("utf-8")
         except InvalidToken:
             return None
-
-    @staticmethod
-    def build(token_id: UUID, secret: str) -> str:
-        return f"{token_id}.{secret}"
-
-    @staticmethod
-    def parse(token: str) -> tuple[UUID, str]:
-        parts = token.split(".", 1)
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            raise ValueError("invalid refresh token")
-
-        try:
-            token_id = UUID(parts[0])
-        except ValueError as error:
-            raise ValueError("invalid refresh token") from error
-
-        return token_id, parts[1]
-
-    @staticmethod
-    def verify_secret(secret: str, token_hash: str) -> bool:
-        return compare_digest(RefreshTokenService.hash_secret(secret), token_hash)
 
     @staticmethod
     def is_active(rt: RefreshToken) -> bool:

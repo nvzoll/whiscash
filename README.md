@@ -1,6 +1,6 @@
 # Whiscash
 
-Service for first-party, non-delegated dual-token authentication (JWT + refresh token).
+Service for first-party, non-delegated dual-token authentication (JWT + refresh token). Inspiration: Auth0, Clerk, Firebase Auth.
 
 FastAPI + Postgres.
 
@@ -39,6 +39,7 @@ OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 | `mise run migrate` | `uv run alembic upgrade head` against localhost |
 | `mise uvr` | `uv run` with env variables loaded |
 | `mise run gen-secrets` | Generate .secrets.json |
+| `mise run create-service-key -- <name>` | Issue a new service-client API key (prints once) |
 
 Reset schema:
 
@@ -82,6 +83,7 @@ Settings load from environment variables or a `.env` file.
 | `JWT_EXPIRES_MINUTES` | `60` |
 | `JWT_REFRESH_EXPIRES_DAYS` | `30` |
 | `JWT_REFRESH_REUSE_GRACE_SECONDS` | `2` |
+| `PASSWORD_RESET_TOKEN_EXPIRES_MINUTES` | `30` |
 
 
 ## API
@@ -95,14 +97,28 @@ Settings load from environment variables or a `.env` file.
 | `POST` | `/auth/logout` | refresh token body |
 | `GET` | `/auth/me` | Bearer access token |
 | `PATCH` | `/auth/me` | Bearer access token |
+| `POST` | `/auth/password-reset/request` | `X-Service-Key` |
+| `POST` | `/auth/password-reset/confirm` | no |
 
 Signup and login return `access_token`, `refresh_token`, `expires_in`, and `user`. Send the access token as `Authorization: Bearer <token>`. Refresh rotates the refresh token and issues a new access token; the previous access token is invalidated. Logout revokes the refresh token, which also invalidates its access token immediately.
 
 Passwords must be at least 8 characters and at most 72 UTF-8 bytes. Emails are stored lowercased.
 
+Whiscash does not send email itself. `/auth/password-reset/request` (callable only by a trusted consumer service, see "Service clients" below) mints a short-lived, single-use reset token and returns it for the caller to embed in an email it sends itself; if the email doesn't match a user, the response still succeeds but omits the token. `/auth/password-reset/confirm` is public and consumes that token: it sets the new password, marks the account's email as verified (completing an email-based reset proves inbox ownership), and revokes every one of the user's refresh-token sessions across all devices.
+
+## Service clients
+
+Some endpoints (currently `/auth/password-reset/request`) are only callable by a trusted backend consumer, authenticated via an `X-Service-Key` header checked against the `service_client` table. Keys are issued directly against the database, not over HTTP:
+
+```sh
+mise run create-service-key -- <name>
+```
+
+This prints the raw key once — it is not recoverable afterwards, only its hash is stored. There's no revocation UI yet; set `revoked_at` on the `service_client` row directly if a key needs to be pulled.
+
 ## Schema
 
-ORM models in `app/db/models.py` are the source of truth. The initial Alembic revision snapshots `user` and `refresh_token`.
+ORM models in `app/db/models.py` are the source of truth. The initial Alembic revision snapshots `user` and `refresh_token`; a later revision adds `password_reset_token` and `service_client`.
 
 After changing models:
 

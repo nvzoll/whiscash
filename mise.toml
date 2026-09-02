@@ -6,6 +6,10 @@ database_url = "postgresql+asyncpg://auth:auth@localhost:5432/auth"
 description = "Generate JWT and refresh token secrets"
 run = "uv run scripts/generate_secrets.py"
 
+[tasks.create-service-key]
+description = "Issue a new service-client API key (prints once)"
+run = "uv run python -m scripts.create_service_key"
+
 [tasks.start]
 description = "Start docker compose"
 run = "docker compose up --build -d --wait"

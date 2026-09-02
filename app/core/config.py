@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     jwt_expires_minutes: int = Field(default=60, gt=0)
     jwt_refresh_expires_days: int = Field(default=30, gt=0)
     jwt_refresh_reuse_grace_seconds: int = Field(default=2, ge=0)
+    password_reset_token_expires_minutes: int = Field(default=30, gt=0)
 
     password_limits: Limits = Limits(min=8, max=72)
 

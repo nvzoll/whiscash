@@ -20,12 +20,26 @@ CREATE_REFRESH_TOKEN_TABLE = text(
     """
 )
 
+CREATE_PASSWORD_RESET_TOKEN_TABLE = text(
+    """
+    CREATE TABLE password_reset_token (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+    )
+    """
+)
+
 
 @pytest.fixture
 async def session() -> AsyncIterator[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite://")
     async with engine.begin() as connection:
         await connection.execute(CREATE_REFRESH_TOKEN_TABLE)
+        await connection.execute(CREATE_PASSWORD_RESET_TOKEN_TABLE)
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as db_session:
