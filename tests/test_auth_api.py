@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
@@ -80,66 +81,77 @@ async def test_login_short_password_returns_401(client: AsyncClient) -> None:
 
 
 async def test_refresh_endpoint_rotates_token(client: AsyncClient) -> None:
-    login_response = await client.post(
+    login = await client.post(
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
-    assert login_response.status_code == 200
-    original_refresh_token = login_response.json()["refresh_token"]
 
-    refresh_response = await client.post(
-        "/auth/refresh",
-        json={"refresh_token": original_refresh_token},
-    )
-    assert refresh_response.status_code == 200
-    new_refresh_token = refresh_response.json()["refresh_token"]
-    assert new_refresh_token != original_refresh_token
+    assert login.status_code == 200
 
-    reused_response = await client.post(
-        "/auth/refresh",
-        json={"refresh_token": original_refresh_token},
-    )
-    assert reused_response.status_code == 200
-    assert reused_response.json()["refresh_token"] == new_refresh_token
+    og_rt = login.json()["refresh_token"]
 
-    follow_up_response = await client.post(
+    refresh = await client.post(
         "/auth/refresh",
-        json={"refresh_token": new_refresh_token},
+        json={"refresh_token": og_rt},
     )
-    assert follow_up_response.status_code == 200
+
+    assert refresh.status_code == 200
+
+    new_rt = refresh.json()["refresh_token"]
+    assert new_rt != og_rt
+
+    reused = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": og_rt},
+    )
+
+    assert reused.status_code == 200
+    assert reused.json()["refresh_token"] == new_rt
+
+    follow_up = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": new_rt},
+    )
+
+    assert follow_up.status_code == 200
+    assert follow_up.json()["refresh_token"] not in (og_rt, new_rt)
 
 
 async def test_refresh_reuse_after_grace_revokes_family(
     client: AsyncClient,
     expire_refresh_reuse_grace: Callable[[], Awaitable[None]],
 ) -> None:
-    login_response = await client.post(
+    login = await client.post(
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
-    assert login_response.status_code == 200
-    original_refresh_token = login_response.json()["refresh_token"]
 
-    refresh_response = await client.post(
+    assert login.status_code == 200
+
+    original_refresh_token = login.json()["refresh_token"]
+
+    refresh = await client.post(
         "/auth/refresh",
         json={"refresh_token": original_refresh_token},
     )
-    assert refresh_response.status_code == 200
-    new_refresh_token = refresh_response.json()["refresh_token"]
+
+    assert refresh.status_code == 200
+
+    new_rt = refresh.json()["refresh_token"]
 
     await expire_refresh_reuse_grace()
 
-    reused_response = await client.post(
+    reused = await client.post(
         "/auth/refresh",
         json={"refresh_token": original_refresh_token},
     )
-    assert reused_response.status_code == 401
+    assert reused.status_code == 401
 
-    successor_response = await client.post(
+    successor = await client.post(
         "/auth/refresh",
-        json={"refresh_token": new_refresh_token},
+        json={"refresh_token": new_rt},
     )
-    assert successor_response.status_code == 401
+    assert successor.status_code == 401
 
 
 async def test_refresh_reuse_does_not_revoke_other_sessions(
@@ -153,42 +165,88 @@ async def test_refresh_reuse_does_not_revoke_other_sessions(
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
+
     assert first_login.status_code == 200
     assert second_login.status_code == 200
-    first_refresh_token = first_login.json()["refresh_token"]
-    second_refresh_token = second_login.json()["refresh_token"]
 
-    rotated_response = await client.post(
+    first_rt = first_login.json()["refresh_token"]
+    second_rt = second_login.json()["refresh_token"]
+
+    rotated = await client.post(
         "/auth/refresh",
-        json={"refresh_token": first_refresh_token},
+        json={"refresh_token": first_rt},
     )
-    assert rotated_response.status_code == 200
+    assert rotated.status_code == 200
 
-    reused_response = await client.post(
+    reused = await client.post(
         "/auth/refresh",
-        json={"refresh_token": first_refresh_token},
+        json={"refresh_token": first_rt},
     )
-    assert reused_response.status_code == 200
+    assert reused.status_code == 200
 
-    other_session_response = await client.post(
+    other_session = await client.post(
         "/auth/refresh",
-        json={"refresh_token": second_refresh_token},
+        json={"refresh_token": second_rt},
     )
-    assert other_session_response.status_code == 200
+    assert other_session.status_code == 200
 
 
-async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
-    login_response = await client.post(
+async def test_concurrent_refresh_issues_one_token_pair(
+    db_backend: str,
+    client: AsyncClient,
+) -> None:
+    if db_backend != "postgres":
+        pytest.skip("concurrent refresh() correctness is a Postgres row-locking guarantee")
+
+    login = await client.post(
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
-    refresh_token = login_response.json()["refresh_token"]
 
-    logout_response = await client.post(
+    assert login.status_code == 200
+
+    og_rt = login.json()["refresh_token"]
+
+    first, second = await asyncio.gather(
+        client.post("/auth/refresh", json={"refresh_token": og_rt}),
+        client.post("/auth/refresh", json={"refresh_token": og_rt}),
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+    rotated = first.json()["refresh_token"]
+    assert second.json()["refresh_token"] == rotated
+    assert rotated != og_rt
+
+    reused = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": og_rt},
+    )
+
+    assert reused.status_code == 200
+    assert reused.json()["refresh_token"] == rotated
+
+    follow_up = await client.post(
+        "/auth/refresh",
+        json={"refresh_token": rotated},
+    )
+
+    assert follow_up.status_code == 200
+    assert follow_up.json()["refresh_token"] not in (og_rt, rotated)
+
+
+async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
+    login = await client.post(
+        "/auth/login",
+        json={"email": "user@example.com", "password": "correct-horse"},
+    )
+    refresh_token = login.json()["refresh_token"]
+
+    logout = await client.post(
         "/auth/logout",
         json={"refresh_token": refresh_token},
     )
-    assert logout_response.status_code == 204
+    assert logout.status_code == 204
 
     second_logout = await client.post(
         "/auth/logout",
@@ -196,11 +254,11 @@ async def test_logout_revokes_refresh_token(client: AsyncClient) -> None:
     )
     assert second_logout.status_code == 204
 
-    refresh_response = await client.post(
+    refresh = await client.post(
         "/auth/refresh",
         json={"refresh_token": refresh_token},
     )
-    assert refresh_response.status_code == 401
+    assert refresh.status_code == 401
 
 
 async def test_refresh_invalidates_previous_access_token(client: AsyncClient) -> None:
@@ -208,48 +266,48 @@ async def test_refresh_invalidates_previous_access_token(client: AsyncClient) ->
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
-    original_access_token = login_response.json()["access_token"]
-    refresh_token = login_response.json()["refresh_token"]
+    og_rt = login_response.json()["access_token"]
+    rt = login_response.json()["refresh_token"]
 
-    refresh_response = await client.post(
+    refresh = await client.post(
         "/auth/refresh",
-        json={"refresh_token": refresh_token},
+        json={"refresh_token": rt},
     )
-    assert refresh_response.status_code == 200
-    rotated_access_token = refresh_response.json()["access_token"]
+    assert refresh.status_code == 200
+    rotated_at = refresh.json()["access_token"]
 
     original_me = await client.get(
         "/auth/me",
-        headers={"Authorization": f"Bearer {original_access_token}"},
+        headers={"Authorization": f"Bearer {og_rt}"},
     )
     assert_invalid_access_token(original_me)
 
     rotated_me = await client.get(
         "/auth/me",
-        headers={"Authorization": f"Bearer {rotated_access_token}"},
+        headers={"Authorization": f"Bearer {rotated_at}"},
     )
     assert rotated_me.status_code == 200
 
 
 async def test_logout_invalidates_access_token(client: AsyncClient) -> None:
-    login_response = await client.post(
+    login = await client.post(
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
-    access_token = login_response.json()["access_token"]
-    refresh_token = login_response.json()["refresh_token"]
+    access_token = login.json()["access_token"]
+    refresh_token = login.json()["refresh_token"]
 
-    me_response = await client.get(
+    me = await client.get(
         "/auth/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
-    assert me_response.status_code == 200
+    assert me.status_code == 200
 
-    logout_response = await client.post(
+    logout = await client.post(
         "/auth/logout",
         json={"refresh_token": refresh_token},
     )
-    assert logout_response.status_code == 204
+    assert logout.status_code == 204
 
     me_after_logout = await client.get(
         "/auth/me",
@@ -350,18 +408,20 @@ async def test_signup_rejects_short_password(client: AsyncClient) -> None:
 
 
 async def test_get_me_returns_authenticated_user(client: AsyncClient) -> None:
-    login_response = await client.post(
+    login = await client.post(
         "/auth/login",
         json={"email": "user@example.com", "password": "correct-horse"},
     )
-    assert login_response.status_code == 200
-    access_token = login_response.json()["access_token"]
+    assert login.status_code == 200
+    access_token = login.json()["access_token"]
 
     response = await client.get(
         "/auth/me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
+
     assert response.status_code == 200
+
     body = response.json()
     assert body["email"] == "user@example.com"
     assert body["email_verified"] is True

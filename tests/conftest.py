@@ -16,6 +16,7 @@ from testcontainers.community.postgres import PostgresContainer
 
 from app.core.config import settings
 from app.core.main import app
+from app.db import session as db_session
 from app.db.models import RefreshToken, User
 from app.repository.protocols import RefreshTokenRepo, UserRepo
 from app.repository.refresh_tokens import SqlRefreshTokenRepo
@@ -182,12 +183,20 @@ async def seeded_user(user_repo: UserRepo) -> User:
 
 @pytest.fixture
 async def client(
+    db_backend: str,
+    pg_engine: AsyncEngine | None,
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
     seeded_user: User,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[AsyncClient]:
-    app.dependency_overrides[SqlUserRepo.new] = lambda: user_repo
-    app.dependency_overrides[SqlRefreshTokenRepo.new] = lambda: refresh_token_repo
+    if db_backend == "postgres":
+        assert pg_engine is not None
+        monkeypatch.setattr(db_session, "AsyncSessionLocal", async_sessionmaker(pg_engine, expire_on_commit=False))
+    else:
+        app.dependency_overrides[SqlUserRepo.new] = lambda: user_repo
+        app.dependency_overrides[SqlRefreshTokenRepo.new] = lambda: refresh_token_repo
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
