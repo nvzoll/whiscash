@@ -1,12 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
-from cryptography.fernet import Fernet, InvalidToken
-
 from app.core.config import settings
 from app.db.models import RefreshToken
 from app.service.opaque_token import OpaqueToken
-
-_fernet = Fernet(settings.refresh_token_key)
 
 
 class RefreshTokenService:
@@ -15,17 +11,6 @@ class RefreshTokenService:
     build = staticmethod(OpaqueToken.build)
     parse = staticmethod(OpaqueToken.parse)
     verify_secret = staticmethod(OpaqueToken.verify_secret)
-
-    @staticmethod
-    def enc_replacement_secret(secret: str) -> str:
-        return _fernet.encrypt(secret.encode("utf-8")).decode("utf-8")
-
-    @staticmethod
-    def dec_replacement_secret(token: str) -> str | None:
-        try:
-            return _fernet.decrypt(token.encode("utf-8")).decode("utf-8")
-        except InvalidToken:
-            return None
 
     @staticmethod
     def is_active(rt: RefreshToken) -> bool:

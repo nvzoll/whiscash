@@ -9,7 +9,7 @@ from httpx import AsyncClient, Response
 
 from app.controller.deps import get_current_user
 from app.db.models import User
-from app.repository.protocols import PasswordResetTokenRepo, RefreshTokenRepo, ServiceClientRepo, UserRepo
+from app.repository.protocols import RefreshTokenRepo
 from app.service.access_token import AccessTokenService
 from app.service.password import PasswordService
 from app.service.service import _DUMMY_HASH, AuthService
@@ -626,51 +626,36 @@ async def test_patch_me_rejects_access_token_for_unknown_user(
 
 
 async def test_get_current_user_rejects_missing_credentials(
-    user_repo: UserRepo,
-    refresh_token_repo: RefreshTokenRepo,
-    password_reset_token_repo: PasswordResetTokenRepo,
-    service_client_repo: ServiceClientRepo,
+    auth_service: AuthService,
 ) -> None:
-    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(HTTPException) as error:
-        await get_current_user(None, service)
+        await get_current_user(None, auth_service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_non_bearer_scheme(
-    user_repo: UserRepo,
-    refresh_token_repo: RefreshTokenRepo,
-    password_reset_token_repo: PasswordResetTokenRepo,
-    service_client_repo: ServiceClientRepo,
+    auth_service: AuthService,
 ) -> None:
     credentials = HTTPAuthorizationCredentials(scheme="Basic", credentials="abc")
-    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(HTTPException) as error:
-        await get_current_user(credentials, service)
+        await get_current_user(credentials, auth_service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_invalid_token(
-    user_repo: UserRepo,
-    refresh_token_repo: RefreshTokenRepo,
-    password_reset_token_repo: PasswordResetTokenRepo,
-    service_client_repo: ServiceClientRepo,
+    auth_service: AuthService,
 ) -> None:
     credentials = HTTPAuthorizationCredentials(
         scheme="Bearer",
         credentials="not-a-token",
     )
-    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(HTTPException) as error:
-        await get_current_user(credentials, service)
+        await get_current_user(credentials, auth_service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_unknown_user(
-    user_repo: UserRepo,
-    refresh_token_repo: RefreshTokenRepo,
-    password_reset_token_repo: PasswordResetTokenRepo,
-    service_client_repo: ServiceClientRepo,
+    auth_service: AuthService,
 ) -> None:
     token = AccessTokenService.create(
         uuid4(),
@@ -679,17 +664,13 @@ async def test_get_current_user_rejects_unknown_user(
         session_id=uuid4(),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(HTTPException) as error:
-        await get_current_user(credentials, service)
+        await get_current_user(credentials, auth_service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_rejects_unknown_session(
-    user_repo: UserRepo,
-    refresh_token_repo: RefreshTokenRepo,
-    password_reset_token_repo: PasswordResetTokenRepo,
-    service_client_repo: ServiceClientRepo,
+    auth_service: AuthService,
     seeded_user: User,
 ) -> None:
     token = AccessTokenService.create(
@@ -699,22 +680,18 @@ async def test_get_current_user_rejects_unknown_session(
         uuid4(),
     )
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
     with pytest.raises(HTTPException) as error:
-        await get_current_user(credentials, service)
+        await get_current_user(credentials, auth_service)
     assert_unauthorized_gate(error.value)
 
 
 async def test_get_current_user_returns_matching_user(
-    user_repo: UserRepo,
+    auth_service: AuthService,
     refresh_token_repo: RefreshTokenRepo,
-    password_reset_token_repo: PasswordResetTokenRepo,
-    service_client_repo: ServiceClientRepo,
     seeded_user: User,
 ) -> None:
     token = await create_session_access_token(refresh_token_repo, seeded_user)
     credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    service = AuthService(user_repo, refresh_token_repo, password_reset_token_repo, service_client_repo)
-    user = await get_current_user(credentials, service)
+    user = await get_current_user(credentials, auth_service)
     assert user.id == seeded_user.id
     assert user.email == seeded_user.email

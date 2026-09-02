@@ -5,16 +5,21 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 os.environ.setdefault("JWT_SECRET", "unit-test-secret-change-me-32-bytes")
-os.environ.setdefault("REFRESH_TOKEN_KEY", "PEeqpiAF7QRc9En7kJBm1VpRUX4UCCiOroUIBvn6GhU=")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://auth:auth@localhost:5432/auth")
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from redis.asyncio import Redis
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 from testcontainers.community.postgres import PostgresContainer
+from testcontainers.community.redis import RedisContainer
 
+from app.cache.grace import RedisGraceCache
+from app.cache.memory import InMemoryGraceCache
+from app.cache.protocols import GraceCache
 from app.core.config import settings
 from app.core.main import app
 from app.db import session as db_session
@@ -25,6 +30,7 @@ from app.repository.refresh_tokens import SqlRefreshTokenRepo
 from app.repository.service_clients import SqlServiceClientRepo
 from app.repository.users import SqlUserRepo
 from app.service.password import PasswordService
+from app.service.service import AuthService
 from tests.backends_postgres import (
     AutoCommitPasswordResetTokenRepo,
     AutoCommitRefreshTokenRepo,
@@ -83,6 +89,37 @@ def pg_engine(postgres_container: PostgresContainer | None) -> Iterator[AsyncEng
     engine = create_async_engine(async_url(postgres_container), poolclass=NullPool)
     yield engine
     asyncio.run(engine.dispose())
+
+
+@pytest.fixture(scope="session")
+def redis_container(db_backend: str) -> Iterator[RedisContainer | None]:
+    if db_backend != "postgres":
+        yield None
+        return
+
+    container = RedisContainer()
+    container.start()
+    try:
+        yield container
+    finally:
+        container.stop()
+
+
+@pytest.fixture
+async def redis_client(redis_container: RedisContainer | None) -> AsyncIterator[Redis | None]:
+    if redis_container is None:
+        yield None
+        return
+
+    client = Redis(
+        host=redis_container.get_container_host_ip(),
+        port=redis_container.get_exposed_port(redis_container.port),
+        decode_responses=True,
+    )
+    try:
+        yield client
+    finally:
+        await client.aclose()
 
 
 @pytest.fixture
@@ -202,7 +239,9 @@ def expire_refresh_reuse_grace(
     async def expire_postgres() -> None:
         assert pg_session is not None
         past = datetime.now(UTC) - timedelta(seconds=settings.jwt_refresh_reuse_grace_seconds + 1)
-        await pg_session.execute(update(RefreshToken).where(RefreshToken.revoked_at.is_not(None)).values(revoked_at=past))
+        await pg_session.execute(
+            update(RefreshToken).where(RefreshToken.revoked_at.is_not(None)).values(revoked_at=past)
+        )
         await pg_session.commit()
 
     return expire_postgres if db_backend == "postgres" else expire_mock
@@ -262,9 +301,41 @@ async def unverified_user(user_repo: UserRepo) -> User:
 
 
 @pytest.fixture
+async def grace_cache(
+    db_backend: str,
+    redis_client: Redis | None,
+) -> AsyncIterator[GraceCache]:
+    if db_backend == "postgres":
+        assert redis_client is not None
+        await redis_client.flushdb()
+        yield RedisGraceCache(redis_client)
+    else:
+        yield InMemoryGraceCache()
+
+
+@pytest.fixture
+def auth_service(
+    user_repo: UserRepo,
+    refresh_token_repo: RefreshTokenRepo,
+    password_reset_token_repo: PasswordResetTokenRepo,
+    service_client_repo: ServiceClientRepo,
+    grace_cache: GraceCache,
+) -> AuthService:
+    return AuthService(
+        user_repo,
+        refresh_token_repo,
+        password_reset_token_repo,
+        service_client_repo,
+        grace_cache,
+    )
+
+
+@pytest.fixture
 async def client(
     db_backend: str,
     pg_engine: AsyncEngine | None,
+    redis_client: Redis | None,
+    grace_cache: GraceCache,
     user_repo: UserRepo,
     refresh_token_repo: RefreshTokenRepo,
     password_reset_token_repo: PasswordResetTokenRepo,
@@ -274,12 +345,15 @@ async def client(
 ) -> AsyncIterator[AsyncClient]:
     if db_backend == "postgres":
         assert pg_engine is not None
+        assert redis_client is not None
         monkeypatch.setattr(db_session, "AsyncSessionLocal", async_sessionmaker(pg_engine, expire_on_commit=False))
+        app.dependency_overrides[RedisGraceCache.new] = lambda: RedisGraceCache(redis_client)
     else:
         app.dependency_overrides[SqlUserRepo.new] = lambda: user_repo
         app.dependency_overrides[SqlRefreshTokenRepo.new] = lambda: refresh_token_repo
         app.dependency_overrides[SqlPasswordResetTokenRepo.new] = lambda: password_reset_token_repo
         app.dependency_overrides[SqlServiceClientRepo.new] = lambda: service_client_repo
+        app.dependency_overrides[RedisGraceCache.new] = lambda: grace_cache
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:

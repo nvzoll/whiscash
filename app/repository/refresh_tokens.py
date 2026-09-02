@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Self
 from uuid import UUID
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import RefreshToken
@@ -33,34 +33,35 @@ class SqlRefreshTokenRepo:
     async def revoke(
         self,
         refresh_token: RefreshToken,
-        *,
-        replaced_by: UUID | None = None,
-        replacement_secret: str | None = None,
     ) -> bool:
         now = datetime.now(UTC)
-        values: dict[str, object] = {"revoked_at": now}
-        if replaced_by is not None:
-            values["replaced_by"] = replaced_by
-            values["replacement_secret"] = replacement_secret
-
         result = await self._session.execute(
             update(RefreshToken)
             .where(
                 RefreshToken.id == refresh_token.id,
                 RefreshToken.revoked_at.is_(None),
             )
-            .values(**values)
+            .values(revoked_at=now)
             .returning(RefreshToken.id)
         )
         if result.scalar_one_or_none() is None:
             return False
 
         refresh_token.revoked_at = now
-        if replaced_by is not None:
-            refresh_token.replaced_by = replaced_by
-            refresh_token.replacement_secret = replacement_secret
-
         return True
+
+    async def has_active_in_family(self, *, user_id: UUID, family_id: UUID) -> bool:
+        result = await self._session.execute(
+            select(RefreshToken.id)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.family_id == family_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > datetime.now(UTC),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
         now = datetime.now(UTC)

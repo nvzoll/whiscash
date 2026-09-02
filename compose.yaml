@@ -6,11 +6,13 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://auth:auth@postgres:5432/auth
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
-      REFRESH_TOKEN_KEY: ${REFRESH_TOKEN_KEY:?REFRESH_TOKEN_KEY must be set}
+      REDIS_URL: redis://redis:6379/0
       JWT_EXPIRES_MINUTES: "60"
       JWT_REFRESH_EXPIRES_DAYS: "30"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test:
@@ -24,6 +26,18 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   purge:
     build: ./sidecar

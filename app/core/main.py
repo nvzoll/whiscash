@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.cache.redis import redis_client
 from app.core.router import router
 from app.db.session import engine
 from app.middleware.trace_id import TraceIdMiddleware
@@ -14,6 +15,7 @@ from app.middleware.trace_id import TraceIdMiddleware
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     await engine.dispose()
+    await redis_client.aclose()
 
 
 def new_app() -> FastAPI:

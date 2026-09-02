@@ -2,7 +2,7 @@
 
 Service for first-party, non-delegated dual-token authentication (JWT + refresh token). Inspiration: Auth0, Clerk, Firebase Auth.
 
-FastAPI + Postgres.
+FastAPI + Postgres + Redis.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ FastAPI + Postgres.
 
 ## Quick start
 
-Do `mise run gen-secrets` to generate random `JWT_SECRET` and `REFRESH_TOKEN_KEY` in a gitignored `.secrets.json` in the project root.
+Do `mise run gen-secrets` to generate a random `JWT_SECRET` in a gitignored `.secrets.json` in the project root.
 
 `mise run` loads that file into the task environment with non-secret env vars from mise.toml.
 
@@ -24,7 +24,7 @@ mise run gen-secrets
 mise run start
 ```
 
-`mise run start` builds and starts the API on [http://localhost:8000](http://localhost:8000), a refresh-token purge sidecar, and Postgres on `localhost:5432`. The API container runs `alembic upgrade head` before uvicorn.
+`mise run start` builds and starts the API on [http://localhost:8000](http://localhost:8000), a refresh-token purge sidecar, Postgres on `localhost:5432`, and Redis on `localhost:6379`. The API container runs `alembic upgrade head` before uvicorn.
 
 OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
@@ -63,10 +63,10 @@ uv run alembic downgrade base
 
 ## Local API (no Docker API container)
 
-Start Postgres only, migrate, then run uvicorn:
+Start Postgres and Redis, migrate, then run uvicorn:
 
 ```sh
-docker compose up -d --wait postgres
+docker compose up -d --wait postgres redis
 uv run alembic upgrade head
 uv run uvicorn app.core.main:app --reload
 ```
@@ -78,8 +78,8 @@ Settings load from environment variables and `.secrets.json` file.
 | Variable | Default |
 | --- | --- |
 | `DATABASE_URL` | `postgresql+asyncpg://auth:auth@localhost:5432/auth` |
+| `REDIS_URL` | required; no default |
 | `JWT_SECRET` | required; no default |
-| `REFRESH_TOKEN_KEY` | required; no default |
 | `JWT_ALGORITHM` | `HS256` |
 | `JWT_EXPIRES_MINUTES` | `60` |
 | `JWT_REFRESH_EXPIRES_DAYS` | `30` |
@@ -144,7 +144,7 @@ Review the generated file, then `mise run migrate` or `uv run alembic upgrade he
 
 ```sh
 uv run pytest # Against mocked repo objects
-uv run pytest --db-backend=postgres # Against one-shot postgres container
+uv run pytest --db-backend=postgres # Against one-shot postgres and redis containers
 ```
 
 Default API tests use mocked repository objects and do not need Postgres.

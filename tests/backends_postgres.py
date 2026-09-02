@@ -64,15 +64,8 @@ class AutoCommitRefreshTokenRepo(SqlRefreshTokenRepo):
     async def revoke(
         self,
         refresh_token: RefreshToken,
-        *,
-        replaced_by: UUID | None = None,
-        replacement_secret: str | None = None,
     ) -> bool:
-        result = await super().revoke(
-            refresh_token,
-            replaced_by=replaced_by,
-            replacement_secret=replacement_secret,
-        )
+        result = await super().revoke(refresh_token)
         await self._session.commit()
         return result
 

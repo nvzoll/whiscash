@@ -27,10 +27,9 @@ class RefreshTokenRepo(Protocol):
     async def revoke(
         self,
         refresh_token: RefreshToken,
-        *,
-        replaced_by: UUID | None = None,
-        replacement_secret: str | None = None,
     ) -> bool: ...
+
+    async def has_active_in_family(self, *, user_id: UUID, family_id: UUID) -> bool: ...
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None: ...
 

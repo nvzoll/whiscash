@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends
 
+from app.cache.grace import RedisGraceCache
+from app.cache.protocols import GraceCache, GraceCacheUnavailableError
 from app.core.config import settings
 from app.db.models import PasswordResetToken, RefreshToken, ServiceClient, User
 from app.repository.password_reset_tokens import SqlPasswordResetTokenRepo
@@ -15,11 +17,13 @@ from app.repository.service_clients import SqlServiceClientRepo
 from app.repository.users import DuplicateEmailError, SqlUserRepo
 from app.service.access_token import AccessTokenService
 from app.service.exceptions import (
+    DomainError,
     InvalidAccessTokenError,
     InvalidCredentialsError,
     InvalidPasswordResetTokenError,
     InvalidRefreshTokenError,
     InvalidServiceKeyError,
+    RefreshUnavailableError,
     UserAlreadyExistsError,
 )
 from app.service.opaque_token import OpaqueToken
@@ -45,11 +49,13 @@ class AuthService:
         refresh_tokens: RefreshTokenRepo,
         password_reset_tokens: PasswordResetTokenRepo,
         service_clients: ServiceClientRepo,
+        grace: GraceCache,
     ) -> None:
         self._users = users
         self._refresh_tokens = refresh_tokens
         self._password_reset_tokens = password_reset_tokens
         self._service_clients = service_clients
+        self._grace = grace
 
     @classmethod
     async def new(
@@ -58,8 +64,9 @@ class AuthService:
         refresh_tokens: Annotated[RefreshTokenRepo, Depends(SqlRefreshTokenRepo.new)],
         password_reset_tokens: Annotated[PasswordResetTokenRepo, Depends(SqlPasswordResetTokenRepo.new)],
         service_clients: Annotated[ServiceClientRepo, Depends(SqlServiceClientRepo.new)],
+        grace: Annotated[GraceCache, Depends(RedisGraceCache.new)],
     ) -> Self:
-        return cls(users, refresh_tokens, password_reset_tokens, service_clients)
+        return cls(users, refresh_tokens, password_reset_tokens, service_clients, grace)
 
     async def signup(
         self,
@@ -104,20 +111,23 @@ class AuthService:
             raise InvalidRefreshTokenError
 
         if old_token.revoked_at is not None:
-            return await self._try_reuse_family(old_token, user)
+            return await self._replay_within_grace(old_token, user)
 
         if not RefreshTokenService.is_active(old_token):
             raise InvalidRefreshTokenError
 
-        rotated_id, rotated_secret = await self._issue_refresh_token(
+        rotated_id, rotated_secret, _ = await self._issue_refresh_token(
             user,
             family_id=old_token.family_id,
         )
 
-        await self._refresh_tokens.revoke(
-            old_token,
-            replaced_by=rotated_id,
-            replacement_secret=RefreshTokenService.enc_replacement_secret(rotated_secret),
+        await self._refresh_tokens.revoke(old_token)
+
+        rotated_token_str = RefreshTokenService.build(rotated_id, rotated_secret)
+        await self._grace.put(
+            old_token.family_id,
+            rotated_token_str,
+            settings.jwt_refresh_reuse_grace_seconds,
         )
 
         return AuthTokens(
@@ -127,7 +137,7 @@ class AuthService:
                 user.email_verified,
                 rotated_id,
             ),
-            refresh_token=RefreshTokenService.build(rotated_id, rotated_secret),
+            refresh_token=rotated_token_str,
             expires_in=settings.jwt_expires_minutes * 60,
             user=user,
         )
@@ -191,11 +201,7 @@ class AuthService:
             raise InvalidPasswordResetTokenError from error
 
         prt = await self._password_reset_tokens.get_by_id(token_id, for_update=True)
-        if (
-            prt is None
-            or not OpaqueToken.verify_secret(secret, prt.token_hash)
-            or not PasswordResetTokenService.is_active(prt)
-        ):
+        if prt is None or not OpaqueToken.verify_secret(secret, prt.token_hash) or not PasswordResetTokenService.is_active(prt):
             raise InvalidPasswordResetTokenError
 
         if (user := await self._users.get_by_id(prt.user_id)) is None:
@@ -219,7 +225,14 @@ class AuthService:
         return client
 
     async def _issue_tokens(self, user: User) -> AuthTokens:
-        session_id, secret = await self._issue_refresh_token(user)
+        session_id, secret, session_family_id = await self._issue_refresh_token(user)
+        refresh_token_str = RefreshTokenService.build(session_id, secret)
+
+        await self._grace.put(
+            session_family_id,
+            refresh_token_str,
+            settings.jwt_refresh_reuse_grace_seconds,
+        )
 
         return AuthTokens(
             access_token=AccessTokenService.create(
@@ -228,7 +241,7 @@ class AuthService:
                 user.email_verified,
                 session_id,
             ),
-            refresh_token=RefreshTokenService.build(session_id, secret),
+            refresh_token=refresh_token_str,
             expires_in=settings.jwt_expires_minutes * 60,
             user=user,
         )
@@ -238,7 +251,7 @@ class AuthService:
         user: User,
         *,
         family_id: UUID | None = None,
-    ) -> tuple[UUID, str]:
+    ) -> tuple[UUID, str, UUID]:
         token_id = uuid4()
         secret = RefreshTokenService.generate_secret()
         session_family_id = family_id or uuid4()
@@ -254,7 +267,7 @@ class AuthService:
             )
         )
 
-        return token_id, secret
+        return token_id, secret, session_family_id
 
     async def _load_refresh_token(
         self,
@@ -277,36 +290,58 @@ class AuthService:
 
         return rt
 
-    async def _try_reuse_family(
+    async def _replay_within_grace(
         self,
         rt: RefreshToken,
         user: User,
     ) -> AuthTokens:
-        if (
-            RefreshTokenService.is_within_reuse_grace(rt.revoked_at)
-            and rt.replaced_by is not None
-            and rt.replacement_secret is not None
-            and (successor := await self._refresh_tokens.get_by_id(rt.replaced_by)) is not None
-            and RefreshTokenService.is_active(successor)
-            and (secret := RefreshTokenService.dec_replacement_secret(rt.replacement_secret)) is not None
-        ):
-            return AuthTokens(
-                access_token=AccessTokenService.create(
-                    user.id,
-                    user.email,
-                    user.email_verified,
-                    successor.id,
-                ),
-                refresh_token=RefreshTokenService.build(successor.id, secret),
-                expires_in=settings.jwt_expires_minutes * 60,
-                user=user,
-            )
-        else:
+        if not RefreshTokenService.is_within_reuse_grace(rt.revoked_at):
             await self._refresh_tokens.revoke_family(
                 user_id=rt.user_id,
                 family_id=rt.family_id,
             )
             raise InvalidRefreshTokenError
+
+        try:
+            cached_token = await self._grace.get(rt.family_id)
+        except GraceCacheUnavailableError as error:
+            raise await self._unresolved_replay_error(rt) from error
+
+        if cached_token is None:
+            raise await self._unresolved_replay_error(rt)
+
+        try:
+            head_id, _ = RefreshTokenService.parse(cached_token)
+        except ValueError as error:
+            raise await self._unresolved_replay_error(rt) from error
+
+        head_row = await self._refresh_tokens.get_by_id(head_id)
+        if head_row is None:
+            raise RefreshUnavailableError
+
+        if not RefreshTokenService.is_active(head_row):
+            raise InvalidRefreshTokenError
+
+        return AuthTokens(
+            access_token=AccessTokenService.create(
+                user.id,
+                user.email,
+                user.email_verified,
+                head_row.id,
+            ),
+            refresh_token=cached_token,
+            expires_in=settings.jwt_expires_minutes * 60,
+            user=user,
+        )
+
+    async def _unresolved_replay_error(self, rt: RefreshToken) -> DomainError:
+        if await self._refresh_tokens.has_active_in_family(
+            user_id=rt.user_id,
+            family_id=rt.family_id,
+        ):
+            return RefreshUnavailableError()
+        else:
+            return InvalidRefreshTokenError()
 
     async def _has_active_session(self, session_id: UUID) -> bool:
         if (rt := await self._refresh_tokens.get_by_id(session_id)) is None:

@@ -9,6 +9,7 @@ from app.service.exceptions import (
     InvalidRefreshTokenError,
     InvalidServiceKeyError,
     PermissionDeniedError,
+    RefreshUnavailableError,
     TokenExpiredError,
     UserAlreadyExistsError,
     UserNotFoundError,
@@ -98,6 +99,18 @@ class InvalidServiceKeyHTTP(BaseHTTPException):
         )
 
 
+class RefreshUnavailableHTTP(BaseHTTPException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error = "refresh_unavailable"
+    default_detail = "Refresh service temporarily unavailable"
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(
+            detail=detail,
+            headers={"Retry-After": "1"},
+        )
+
+
 _DOMAIN_HTTP_MAP = frozendict(
     {
         UserAlreadyExistsError: UserAlreadyExistsHTTP,
@@ -109,6 +122,7 @@ _DOMAIN_HTTP_MAP = frozendict(
         PermissionDeniedError: PermissionDeniedHTTP,
         InvalidPasswordResetTokenError: InvalidPasswordResetTokenHTTP,
         InvalidServiceKeyError: InvalidServiceKeyHTTP,
+        RefreshUnavailableError: RefreshUnavailableHTTP,
     }
 )
 

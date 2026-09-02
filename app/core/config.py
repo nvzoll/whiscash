@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     database_url: str
     jwt_secret: str
-    refresh_token_key: str
+    redis_url: str
     jwt_algorithm: Literal["HS256"] = "HS256"
     jwt_expires_minutes: int = Field(default=60, gt=0)
     jwt_refresh_expires_days: int = Field(default=30, gt=0)

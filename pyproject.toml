@@ -6,12 +6,12 @@ dependencies = [
     "alembic>=1.19.1",
     "asyncpg>=0.31.0",
     "bcrypt>=5.0.0",
-    "cryptography>=50.0.1",
     "fastapi[standard]>=0.141.1",
     "frozendict>=2.4.7",
     "pydantic-settings>=2.15.0",
     "pydantic[email]>=2.13.4",
     "pyjwt>=2.13.0",
+    "redis>=5.2.0",
     "sqlalchemy>=2.0.52",
 ]
 

@@ -3,8 +3,6 @@ import json
 import secrets
 from pathlib import Path
 
-from cryptography.fernet import Fernet
-
 SECRETS_PATH = (Path(__file__) / ".." / ".." / ".." / ".secrets.json").resolve()
 
 
@@ -21,7 +19,6 @@ def parse_extra(args: list[str]) -> dict[str, str]:
 def generate(args: argparse.Namespace) -> None:
     values = {
         "jwt_secret": secrets.token_urlsafe(32),
-        "refresh_token_key": Fernet.generate_key().decode(),
         **parse_extra(args.extra),
     }
 
@@ -33,6 +30,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     group = subparsers.add_parser("secrets", help="Manage .secrets.json")
     actions = group.add_subparsers(dest="action", required=True)
 
-    generate_parser = actions.add_parser("generate", help="Generate JWT and refresh token secrets")
+    generate_parser = actions.add_parser("generate", help="Generate JWT secrets")
     generate_parser.add_argument("extra", nargs="*", help="Additional key=value pairs to include")
     generate_parser.set_defaults(func=generate)

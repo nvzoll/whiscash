@@ -65,9 +65,6 @@ class MockRefreshTokenRepo:
     async def revoke(
         self,
         refresh_token: RefreshToken,
-        *,
-        replaced_by: UUID | None = None,
-        replacement_secret: str | None = None,
     ) -> bool:
         async with self._store.revoke_lock:
             stored = self._store.refresh_tokens.get(refresh_token.id)
@@ -76,12 +73,17 @@ class MockRefreshTokenRepo:
             now = datetime.now(UTC)
             stored.revoked_at = now
             refresh_token.revoked_at = now
-            if replaced_by is not None:
-                stored.replaced_by = replaced_by
-                stored.replacement_secret = replacement_secret
-                refresh_token.replaced_by = replaced_by
-                refresh_token.replacement_secret = replacement_secret
             return True
+
+    async def has_active_in_family(self, *, user_id: UUID, family_id: UUID) -> bool:
+        now = datetime.now(UTC)
+        return any(
+            token.user_id == user_id
+            and token.family_id == family_id
+            and token.revoked_at is None
+            and token.expires_at > now
+            for token in self._store.refresh_tokens.values()
+        )
 
     async def revoke_family(self, *, user_id: UUID, family_id: UUID) -> None:
         now = datetime.now(UTC)
