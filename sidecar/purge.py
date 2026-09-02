@@ -4,12 +4,12 @@ import sys
 from datetime import UTC, datetime
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from refresh_token_purge import purge_expired_refresh_tokens
+from refresh_token_purge import clear_expired_replacement_secrets, purge_expired_refresh_tokens
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-DEFAULT_INTERVAL_SECONDS = 3600
+DEFAULT_INTERVAL_SECONDS = 300
 DEFAULT_BATCH_SIZE = 1000
 PURGE_LOCK_KEY = 748_293_104
 
@@ -18,6 +18,7 @@ class PurgeSettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", frozen=True)
 
     database_url: str
+    jwt_refresh_reuse_grace_seconds: int = 2
 
 
 settings = PurgeSettings()
@@ -25,16 +26,21 @@ engine = create_async_engine(settings.database_url)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def run_purge_once(session: AsyncSession, *, batch_size: int) -> int:
+async def run_purge_once(session: AsyncSession, *, batch_size: int, reuse_grace_seconds: int) -> tuple[int, int]:
     locked = await session.scalar(
         text("SELECT pg_try_advisory_xact_lock(:key)"),
         {"key": PURGE_LOCK_KEY},
     )
     if not locked:
-        return 0
+        return 0, 0
     deleted = await purge_expired_refresh_tokens(session, limit=batch_size)
+    cleared = await clear_expired_replacement_secrets(
+        session,
+        grace_seconds=reuse_grace_seconds,
+        limit=batch_size,
+    )
     await session.commit()
-    return deleted
+    return deleted, cleared
 
 
 async def run_loop(*, interval_seconds: int, batch_size: int, once: bool) -> None:
@@ -42,9 +48,13 @@ async def run_loop(*, interval_seconds: int, batch_size: int, once: bool) -> Non
         while True:
             try:
                 async with SessionLocal() as session:
-                    deleted = await run_purge_once(session, batch_size=batch_size)
+                    deleted, cleared = await run_purge_once(
+                        session,
+                        batch_size=batch_size,
+                        reuse_grace_seconds=settings.jwt_refresh_reuse_grace_seconds,
+                    )
                 print(
-                    f"{datetime.now(UTC).isoformat()} purged {deleted} expired refresh tokens",
+                    f"{datetime.now(UTC).isoformat()} purged {deleted} expired refresh tokens, cleared {cleared} stale replacement secrets",
                     flush=True,
                 )
             except SQLAlchemyError as error:

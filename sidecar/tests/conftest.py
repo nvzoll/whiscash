@@ -13,7 +13,9 @@ CREATE_REFRESH_TOKEN_TABLE = text(
         token_hash TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         revoked_at TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        replaced_by TEXT,
+        replacement_secret TEXT
     )
     """
 )
