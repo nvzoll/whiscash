@@ -156,5 +156,5 @@ cd sidecar
 uv run pytest
 ```
 
-Sidecar tests run against an in-memory SQLite engine and do not need Postgres.
+Sidecar tests require Docker and run against a PostgreSQL container with the root Alembic migrations.
 

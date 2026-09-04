@@ -10,14 +10,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "aiosqlite>=0.21.0",
     "pytest-asyncio>=1.0.0",
     "pytest>=9.1.1",
+    "testcontainers[postgres]>=4.15.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
-filterwarnings = [
-    "ignore:The default datetime adapter is deprecated as of Python 3.12:DeprecationWarning:aiosqlite",
-]

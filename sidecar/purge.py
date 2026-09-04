@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from password_reset_token_purge import purge_password_reset_tokens
@@ -8,7 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from refresh_token_purge import purge_expired_refresh_tokens
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
+from sqlalchemy.pool import NullPool
 
 DEFAULT_INTERVAL_SECONDS = 300
 DEFAULT_BATCH_SIZE = 1000
@@ -22,41 +24,72 @@ class PurgeSettings(BaseSettings):
 
 
 settings = PurgeSettings()
-engine = create_async_engine(settings.database_url)
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine(settings.database_url, poolclass=NullPool)
+
+
+@dataclass(frozen=True)
+class PurgeResult:
+    purged_refresh_tokens: int
+    purged_reset_tokens: int
 
 
 async def run_purge_once(
-    session: AsyncSession,
+    conn: AsyncConnection,
     *,
     batch_size: int,
-) -> tuple[int, int]:
-    locked = await session.scalar(
-        text("SELECT pg_try_advisory_xact_lock(:key)"),
+) -> PurgeResult | None:
+    locked = await conn.scalar(
+        text("SELECT pg_try_advisory_lock(:key)"),
         {"key": PURGE_LOCK_KEY},
     )
     if not locked:
-        return 0, 0
-    deleted = await purge_expired_refresh_tokens(session, limit=batch_size)
-    deleted_reset_tokens = await purge_password_reset_tokens(session, limit=batch_size)
-    await session.commit()
-    return deleted, deleted_reset_tokens
+        return None
+    success = False
+    try:
+        deleted = await purge_expired_refresh_tokens(conn, limit=batch_size)
+        deleted_reset_tokens = await purge_password_reset_tokens(conn, limit=batch_size)
+        success = True
+        return PurgeResult(
+            purged_refresh_tokens=deleted,
+            purged_reset_tokens=deleted_reset_tokens,
+        )
+    finally:
+        try:
+            await conn.rollback()
+        except Exception:
+            if success:
+                raise
+        try:
+            await conn.execute(
+                text("SELECT pg_advisory_unlock(:key)"),
+                {"key": PURGE_LOCK_KEY},
+            )
+            await conn.commit()
+        except Exception:
+            if success:
+                raise
 
 
 async def run_loop(*, interval_seconds: int, batch_size: int, once: bool) -> None:
     try:
         while True:
             try:
-                async with SessionLocal() as session:
-                    deleted, deleted_reset_tokens = await run_purge_once(
-                        session,
+                async with engine.connect() as conn:
+                    result = await run_purge_once(
+                        conn,
                         batch_size=batch_size,
                     )
-                print(
-                    f"{datetime.now(UTC).isoformat()} purged {deleted} expired refresh tokens, "
-                    f"purged {deleted_reset_tokens} expired/used password reset tokens",
-                    flush=True,
-                )
+                if result is None:
+                    print(
+                        f"{datetime.now(UTC).isoformat()} skipped: another purge holds the lock",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"{datetime.now(UTC).isoformat()} purged {result.purged_refresh_tokens} expired refresh tokens, "
+                        f"purged {result.purged_reset_tokens} expired/used password reset tokens",
+                        flush=True,
+                    )
             except SQLAlchemyError as error:
                 print(
                     f"{datetime.now(UTC).isoformat()} purge failed: {error}",

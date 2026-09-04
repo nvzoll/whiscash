@@ -70,6 +70,13 @@ class RefreshToken(CreatedAtMixin, Base):
 
 class PasswordResetToken(CreatedAtMixin, Base):
     __tablename__ = "password_reset_token"
+    __table_args__ = (
+        Index(
+            "password_reset_token_used_at_idx",
+            "used_at",
+            postgresql_where=text("used_at IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(

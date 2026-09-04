@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 _DELETE_EXPIRED_BATCH = text(
     """
@@ -11,13 +11,12 @@ _DELETE_EXPIRED_BATCH = text(
         WHERE expires_at <= :cutoff
         LIMIT :limit
     )
-    RETURNING id
     """
 )
 
 
 async def purge_expired_refresh_tokens(
-    session: AsyncSession,
+    conn: AsyncConnection,
     *,
     now: datetime | None = None,
     limit: int = 1000,
@@ -25,12 +24,13 @@ async def purge_expired_refresh_tokens(
     current_time = now or datetime.now(UTC)
     total = 0
     while True:
-        result = await session.execute(
+        result = await conn.execute(
             _DELETE_EXPIRED_BATCH,
             {"cutoff": current_time, "limit": limit},
         )
-        deleted_ids = result.scalars().all()
-        total += len(deleted_ids)
-        if len(deleted_ids) < limit:
+        await conn.commit()
+        count = result.rowcount
+        total += count
+        if count < limit:
             break
     return total
