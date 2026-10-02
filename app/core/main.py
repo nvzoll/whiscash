@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.cache.redis import redis_client
+from app.core.observability import configure_logfire
 from app.core.router import router
 from app.db.session import engine
 from app.middleware.trace_id import TraceIdMiddleware
@@ -20,8 +21,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def new_app() -> FastAPI:
     app = FastAPI(title="Auth Service", lifespan=lifespan)
+
     app.add_middleware(TraceIdMiddleware)
     app.include_router(router)
+
+    configure_logfire(app)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

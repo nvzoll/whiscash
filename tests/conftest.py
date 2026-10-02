@@ -7,6 +7,7 @@ from uuid import UUID
 os.environ.setdefault("JWT_SECRET", "unit-test-secret-change-me-32-bytes")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://auth:auth@localhost:5432/auth")
+os.environ["LOGFIRE_TOKEN"] = ""
 
 import pytest
 from httpx import ASGITransport, AsyncClient

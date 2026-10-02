@@ -1,10 +1,11 @@
-import uuid
 from collections.abc import Awaitable, Callable
+from typing import Final
 
 from fastapi import Request, Response
+from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware
 
-HEADER_NAME = "x-trace-id"
+HEADER_NAME: Final[str] = "x-trace-id"
 
 
 class TraceIdMiddleware(BaseHTTPMiddleware):
@@ -13,8 +14,10 @@ class TraceIdMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        trace_id = request.headers.get(HEADER_NAME) or str(uuid.uuid4())
-        request.state.trace_id = trace_id
-        response: Response = await call_next(request)
-        response.headers[HEADER_NAME] = trace_id
+        response = await call_next(request)
+
+        span_context = trace.get_current_span().get_span_context()
+        if span_context.is_valid:
+            response.headers[HEADER_NAME] = trace.format_trace_id(span_context.trace_id)
+
         return response

@@ -8,6 +8,7 @@ dependencies = [
     "bcrypt>=5.0.0",
     "fastapi[standard]>=0.141.1",
     "frozendict>=2.4.7",
+    "logfire[fastapi,redis,sqlalchemy]>=5.1.1",
     "pydantic-settings>=2.15.0",
     "pydantic[email]>=2.13.4",
     "pyjwt>=2.13.0",

@@ -1,4 +1,5 @@
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
@@ -695,3 +696,13 @@ async def test_get_current_user_returns_matching_user(
     user = await get_current_user(credentials, auth_service)
     assert user.id == seeded_user.id
     assert user.email == seeded_user.email
+
+
+async def test_response_trace_id_is_otel_trace_id(client: AsyncClient) -> None:
+    response = await client.post(
+        "/auth/login",
+        json={"email": "nobody@example.com", "password": "wrong-password"},
+        headers={"x-trace-id": "client-supplied"},
+    )
+
+    assert re.fullmatch(r"[0-9a-f]{32}", response.headers["x-trace-id"])

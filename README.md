@@ -85,6 +85,10 @@ Settings load from environment variables and `.secrets.json` file.
 | `JWT_REFRESH_EXPIRES_DAYS` | `30` |
 | `JWT_REFRESH_REUSE_GRACE_SECONDS` | `2` |
 | `PASSWORD_RESET_TOKEN_EXPIRES_MINUTES` | `30` |
+| `LOGFIRE_TOKEN` | optional; traces are sent to Logfire only when set |
+| `LOGFIRE_ENVIRONMENT` | optional; Logfire environment tag |
+
+Every response carries an `x-trace-id` header with the OpenTelemetry trace id, the same one Logfire shows. Send a W3C `traceparent` header to continue an existing trace.
 
 
 ## API

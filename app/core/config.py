@@ -1,6 +1,6 @@
 from typing import Literal, NamedTuple
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     jwt_refresh_expires_days: int = Field(default=30, gt=0)
     jwt_refresh_reuse_grace_seconds: int = Field(default=2, ge=0)
     password_reset_token_expires_minutes: int = Field(default=30, gt=0)
+    logfire_token: SecretStr | None = None
 
     password_limits: Limits = Limits(min=8, max=72)
 

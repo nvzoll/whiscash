@@ -9,6 +9,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       JWT_EXPIRES_MINUTES: "60"
       JWT_REFRESH_EXPIRES_DAYS: "30"
+      LOGFIRE_TOKEN: ${logfire_token:-}
+      LOGFIRE_ENVIRONMENT: local
     depends_on:
       postgres:
         condition: service_healthy
