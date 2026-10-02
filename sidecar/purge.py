@@ -38,13 +38,12 @@ async def run_purge_once(
     *,
     batch_size: int,
 ) -> PurgeResult | None:
-    locked = await conn.scalar(
+    if not await conn.scalar(
         text("SELECT pg_try_advisory_lock(:key)"),
         {"key": PURGE_LOCK_KEY},
-    )
-    if not locked:
+    ):
         return None
-    success = False
+
     try:
         deleted = await purge_expired_refresh_tokens(conn, limit=batch_size)
         deleted_reset_tokens = await purge_password_reset_tokens(conn, limit=batch_size)
@@ -105,6 +104,7 @@ async def run_loop(*, interval_seconds: int, batch_size: int, once: bool) -> Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Purge expired refresh tokens")
+
     parser.add_argument(
         "--interval-seconds",
         type=int,
@@ -119,11 +119,15 @@ def main() -> None:
         "--once",
         action="store_true",
     )
+
     args = parser.parse_args()
+
     if args.interval_seconds <= 0:
         parser.error("--interval-seconds must be greater than 0")
+
     if args.batch_size <= 0:
         parser.error("--batch-size must be greater than 0")
+
     asyncio.run(
         run_loop(
             interval_seconds=args.interval_seconds,
